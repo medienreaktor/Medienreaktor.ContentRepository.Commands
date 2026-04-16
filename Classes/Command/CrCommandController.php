@@ -71,4 +71,43 @@ class CrCommandController extends CommandController
             $this->quit(1);
         }
     }
+
+    /**
+     * Set node properties
+     *
+     * @param string $contentRepository Identifier of the Content Repository
+     * @param string $workspaceName The workspace in which the set properties operation is to be performed
+     * @param string $nodeAggregateId The identifier of the node aggregate to set the properties for
+     * @param string $originDimensionSpacePoint The dimension space point the properties should be changed in
+     * @param string $propertyValues The property key/value pairs to set
+     * @return void
+     */
+    public function setNodePropertiesCommand(
+        string $contentRepository,
+        string $workspaceName,
+        string $nodeAggregateId,
+        string $originDimensionSpacePoint,
+        string $propertyValues
+    ): void
+    {
+        $command = SetNodeProperties::create(
+            workspaceName: WorkspaceName::fromString($workspaceName),
+            nodeAggregateId: NodeAggregateId::fromString($nodeAggregateId),
+            originDimensionSpacePoint: OriginDimensionSpacePoint::fromJsonString($originDimensionSpacePoint),
+            propertyValues: PropertyValuesToWrite::fromJsonString($propertyValues)
+        );
+
+        try {
+            $this->contentRepositoryRegistry
+                ->get(ContentRepositoryId::fromString($contentRepository))
+                ->handle($command);
+            $this->outputLine(
+                '<success>Set node properties of node %s in workspace %s.</success>',
+                [$nodeAggregateId, $workspaceName]
+            );
+        } catch (\Exception $e) {
+            $this->outputLine('<error>Error:</error> %s', [$e->getMessage()]);
+            $this->quit(1);
+        }
+    }
 }
