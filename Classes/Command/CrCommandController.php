@@ -8,6 +8,7 @@ use Neos\ContentRepository\Core\DimensionSpace\OriginDimensionSpacePoint;
 use Neos\ContentRepository\Core\Feature\NodeCreation\Command\CreateNodeAggregateWithNode;
 use Neos\ContentRepository\Core\Feature\NodeModification\Command\SetNodeProperties;
 use Neos\ContentRepository\Core\Feature\NodeModification\Dto\PropertyValuesToWrite;
+use Neos\ContentRepository\Core\NodeType\NodeType;
 use Neos\ContentRepository\Core\NodeType\NodeTypeName;
 use Neos\ContentRepository\Core\SharedModel\ContentRepository\ContentRepositoryId;
 use Neos\ContentRepository\Core\SharedModel\Node\NodeAggregateId;
@@ -49,19 +50,20 @@ class CrCommandController extends CommandController
         string $propertyValues
     ): void
     {
+        $cr = $this->contentRepositoryRegistry->get(ContentRepositoryId::fromString($contentRepository));
+        $nodeType = $cr->getNodeTypeManager()->getNodeType(NodeTypeName::fromString($nodeTypeName));
+
         $command = CreateNodeAggregateWithNode::create(
             workspaceName: WorkspaceName::fromString($workspaceName),
             nodeAggregateId: NodeAggregateId::create(),
             nodeTypeName: NodeTypeName::fromString($nodeTypeName),
             originDimensionSpacePoint: OriginDimensionSpacePoint::fromJsonString($originDimensionSpacePoint),
             parentNodeAggregateId: NodeAggregateId::fromString($parentNodeId),
-            initialPropertyValues: PropertyValuesToWrite::fromJsonString($propertyValues)
+            initialPropertyValues: $this->buildPropertyValuesToWrite($propertyValues, $nodeType)
         );
 
         try {
-            $this->contentRepositoryRegistry
-                ->get(ContentRepositoryId::fromString($contentRepository))
-                ->handle($command);
+            $cr->handle($command);
             $this->outputLine(
                 '<success>Created node of type %s in workspace %s.</success>',
                 [$nodeTypeName, $workspaceName]
@@ -90,17 +92,22 @@ class CrCommandController extends CommandController
         string $propertyValues
     ): void
     {
+        $cr = $this->contentRepositoryRegistry->get(ContentRepositoryId::fromString($contentRepository));
+        $nodeAggregate = $cr->getContentGraph(WorkspaceName::fromString($workspaceName))
+            ->findNodeAggregateById(NodeAggregateId::fromString($nodeAggregateId));
+        $nodeType = $nodeAggregate !== null
+            ? $cr->getNodeTypeManager()->getNodeType($nodeAggregate->nodeTypeName)
+            : null;
+
         $command = SetNodeProperties::create(
             workspaceName: WorkspaceName::fromString($workspaceName),
             nodeAggregateId: NodeAggregateId::fromString($nodeAggregateId),
             originDimensionSpacePoint: OriginDimensionSpacePoint::fromJsonString($originDimensionSpacePoint),
-            propertyValues: PropertyValuesToWrite::fromJsonString($propertyValues)
+            propertyValues: $this->buildPropertyValuesToWrite($propertyValues, $nodeType)
         );
 
         try {
-            $this->contentRepositoryRegistry
-                ->get(ContentRepositoryId::fromString($contentRepository))
-                ->handle($command);
+            $cr->handle($command);
             $this->outputLine(
                 '<success>Set node properties of node %s in workspace %s.</success>',
                 [$nodeAggregateId, $workspaceName]
@@ -109,5 +116,27 @@ class CrCommandController extends CommandController
             $this->outputLine('<error>Error:</error> %s', [$e->getMessage()]);
             $this->quit(1);
         }
+    }
+
+    private function buildPropertyValuesToWrite(string $jsonString, ?NodeType $nodeType): PropertyValuesToWrite
+    {
+        $rawValues = \json_decode($jsonString, true, 512, JSON_THROW_ON_ERROR);
+
+        if ($nodeType === null) {
+            return PropertyValuesToWrite::fromArray($rawValues);
+        }
+
+        $convertedValues = [];
+        foreach ($rawValues as $propertyName => $value) {
+            if (is_string($value) && $nodeType->hasProperty($propertyName)) {
+                $propertyType = $nodeType->getPropertyType($propertyName);
+                if ($propertyType === 'DateTime') {
+                    $value = new \DateTimeImmutable($value);
+                }
+            }
+            $convertedValues[$propertyName] = $value;
+        }
+
+        return PropertyValuesToWrite::fromArray($convertedValues);
     }
 }
