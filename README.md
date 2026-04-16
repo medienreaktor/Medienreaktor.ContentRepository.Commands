@@ -33,4 +33,16 @@ flow cr:createnodeaggregate
     --propertyValues '{"title": "My new node", "uriPathSegment": "my-new-node"}'
 ```
 
+### Set node properties
+
+Use `cr:setnodeproperties` to set new properties on existing nodes.
+
+| Argument                    | Description                                                            | Example                                |
+| --------------------------- | ---------------------------------------------------------------------- | -------------------------------------- |
+| `contentRepository`         | Identifier of the Content Repository                                   | `default`                              |
+| `workspaceName`             | The workspace in which the set properties operation is to be performed | `live`                                 |
+| `nodeAggregateId`           | The identifier of the node aggregate to set the properties for         | `213b1564-14df-4984-bccd-5c6d003179ef` |
+| `originDimensionSpacePoint` | The dimension space point the properties should be changed in          | `{"language": "en"}`                   |
+| `propertyValues`            | The property key/value pairs to write to set                           | `{"title": "My new title"}`            |
+
 That's it for now. More Commands will be added in the future.
