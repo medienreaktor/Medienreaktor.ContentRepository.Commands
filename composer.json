@@ -2,6 +2,7 @@
     "name": "medienreaktor/contentrepository-commands",
     "description": "medienreaktor ContentRepository Commands",
     "type": "neos-package",
+    "license": "MIT",
     "require": {
         "neos/flow": "*",
         "neos/neos": "^9.0.0"
