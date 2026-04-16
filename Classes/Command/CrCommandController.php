@@ -49,22 +49,26 @@ class CrCommandController extends CommandController
         string $propertyValues
     ): void
     {
-        $this->contentRepositoryRegistry
-            ->get(ContentRepositoryId::fromString($contentRepository))
-            ->handle(
-                CreateNodeAggregateWithNode::create(
-                    workspaceName: WorkspaceName::fromString($workspaceName),
-                    nodeAggregateId: NodeAggregateId::create(),
-                    nodeTypeName: NodeTypeName::fromString($nodeTypeName),
-                    originDimensionSpacePoint: OriginDimensionSpacePoint::fromJsonString($originDimensionSpacePoint),
-                    parentNodeAggregateId: NodeAggregateId::fromString($parentNodeId),
-                    initialPropertyValues: PropertyValuesToWrite::fromJsonString($propertyValues)
-                )
-            );
-
-        $this->outputLine(
-            '<success>Created node of type %s in workspace %s.</success>',
-            [$nodeTypeName, $workspaceName]
+        $command = CreateNodeAggregateWithNode::create(
+            workspaceName: WorkspaceName::fromString($workspaceName),
+            nodeAggregateId: NodeAggregateId::create(),
+            nodeTypeName: NodeTypeName::fromString($nodeTypeName),
+            originDimensionSpacePoint: OriginDimensionSpacePoint::fromJsonString($originDimensionSpacePoint),
+            parentNodeAggregateId: NodeAggregateId::fromString($parentNodeId),
+            initialPropertyValues: PropertyValuesToWrite::fromJsonString($propertyValues)
         );
+
+        try {
+            $this->contentRepositoryRegistry
+                ->get(ContentRepositoryId::fromString($contentRepository))
+                ->handle($command);
+            $this->outputLine(
+                '<success>Created node of type %s in workspace %s.</success>',
+                [$nodeTypeName, $workspaceName]
+            );
+        } catch (\Exception $e) {
+            $this->outputLine('<error>Error:</error> %s', [$e->getMessage()]);
+            $this->quit(1);
+        }
     }
 }
