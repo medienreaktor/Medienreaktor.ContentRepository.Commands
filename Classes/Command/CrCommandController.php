@@ -7,11 +7,13 @@ use Neos\ContentRepository\Core\DimensionSpace\DimensionSpacePoint;
 use Neos\ContentRepository\Core\DimensionSpace\OriginDimensionSpacePoint;
 use Neos\ContentRepository\Core\Feature\NodeCreation\Command\CreateNodeAggregateWithNode;
 use Neos\ContentRepository\Core\Feature\NodeModification\Command\SetNodeProperties;
+use Neos\ContentRepository\Core\Feature\NodeRemoval\Command\RemoveNodeAggregate;
 use Neos\ContentRepository\Core\Feature\NodeModification\Dto\PropertyValuesToWrite;
 use Neos\ContentRepository\Core\NodeType\NodeType;
 use Neos\ContentRepository\Core\NodeType\NodeTypeName;
 use Neos\ContentRepository\Core\SharedModel\ContentRepository\ContentRepositoryId;
 use Neos\ContentRepository\Core\SharedModel\Node\NodeAggregateId;
+use Neos\ContentRepository\Core\SharedModel\Node\NodeVariantSelectionStrategy;
 use Neos\ContentRepository\Core\SharedModel\Workspace\WorkspaceName;
 use Neos\ContentRepositoryRegistry\ContentRepositoryRegistry;
 use Neos\Flow\Annotations as Flow;
@@ -110,6 +112,43 @@ class CrCommandController extends CommandController
             $cr->handle($command);
             $this->outputLine(
                 '<success>Set node properties of node %s in workspace %s.</success>',
+                [$nodeAggregateId, $workspaceName]
+            );
+        } catch (\Exception $e) {
+            $this->outputLine('<error>Error:</error> %s', [$e->getMessage()]);
+            $this->quit(1);
+        }
+    }
+
+    /**
+     * Remove node aggregate
+     *
+     * @param string $contentRepository Identifier of the Content Repository
+     * @param string $workspaceName The workspace in which the remove operation is to be performed
+     * @param string $nodeAggregateId The identifier of the node aggregate to remove
+     * @param string $coveredDimensionSpacePoint The dimension space point the node should be removed in
+     * @return void
+     */
+    public function removeNodeAggregateCommand(
+        string $contentRepository,
+        string $workspaceName,
+        string $nodeAggregateId,
+        string $coveredDimensionSpacePoint
+    ): void
+    {
+        $cr = $this->contentRepositoryRegistry->get(ContentRepositoryId::fromString($contentRepository));
+
+        $command = RemoveNodeAggregate::create(
+            workspaceName: WorkspaceName::fromString($workspaceName),
+            nodeAggregateId: NodeAggregateId::fromString($nodeAggregateId),
+            coveredDimensionSpacePoint: DimensionSpacePoint::fromJsonString($coveredDimensionSpacePoint),
+            nodeVariantSelectionStrategy: NodeVariantSelectionStrategy::STRATEGY_ALL_VARIANTS
+        );
+
+        try {
+            $cr->handle($command);
+            $this->outputLine(
+                '<success>Removed node %s in workspace %s.</success>',
                 [$nodeAggregateId, $workspaceName]
             );
         } catch (\Exception $e) {
