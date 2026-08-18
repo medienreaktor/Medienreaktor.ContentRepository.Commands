@@ -13,6 +13,10 @@ use Neos\ContentRepository\Core\Feature\NodeModification\Command\SetNodeProperti
 use Neos\ContentRepository\Core\Feature\NodeRemoval\Command\RemoveNodeAggregate;
 use Neos\ContentRepository\Core\NodeType\NodeType;
 use Neos\ContentRepository\Core\NodeType\NodeTypeName;
+use Neos\ContentRepository\Core\Projection\ContentGraph\AbsoluteNodePath;
+use Neos\ContentRepository\Core\Projection\ContentGraph\ContentSubgraphInterface;
+use Neos\ContentRepository\Core\Projection\ContentGraph\Filter\FindChildNodesFilter;
+use Neos\ContentRepository\Core\Projection\ContentGraph\VisibilityConstraints;
 use Neos\ContentRepository\Core\SharedModel\ContentRepository\ContentRepositoryId;
 use Neos\ContentRepository\Core\SharedModel\Node\NodeAggregateId;
 use Neos\ContentRepository\Core\SharedModel\Node\NodeVariantSelectionStrategy;
@@ -20,15 +24,30 @@ use Neos\ContentRepository\Core\SharedModel\Workspace\WorkspaceName;
 use Neos\ContentRepositoryRegistry\ContentRepositoryRegistry;
 use Neos\Flow\Annotations as Flow;
 use Neos\Flow\Cli\CommandController;
+use Symfony\Component\Console\Output\ConsoleOutputInterface;
+use Symfony\Component\Console\Output\OutputInterface;
 
 /**
  * The Content Repository Command Controller
  *
- * Each command builds one Content Repository command and hands it over; the Content Repository
- * validates it and emits the resulting event. Nothing here prompts for confirmation or offers a
- * dry run, because these are scripting primitives meant to be composed in seed and import scripts.
+ * The write commands each build one Content Repository command and hand it over; the Content
+ * Repository validates it and emits the resulting event. The find commands read the graph. Nothing
+ * here prompts for confirmation or offers a dry run, because these are scripting primitives meant
+ * to be composed in seed and import scripts.
  *
- * Two consequences of that worth knowing before pointing them at anything but a seed:
+ * **The output contract: stdout carries data, stderr carries everything else.** A command that has
+ * a result — the ID of a created node, the IDs a query matched — writes it to stdout, one value per
+ * line, with no markup and nothing else. Progress and errors go to stderr. So a caller captures a
+ * value directly and never parses:
+ *
+ *     ID=$(./flow cr:createnodeaggregate ...)
+ *
+ * That contract is why the write commands do not take a node aggregate ID: creation reports the one
+ * it minted, which is the same information without a second way to get it wrong. It also means any
+ * future line written to stdout breaks every caller, so new output belongs on stderr unless it is
+ * the command's result.
+ *
+ * Two things worth knowing before pointing these at anything but a seed:
  *
  * - They write to whichever workspace they are told to. Removal in particular is a *hard* removal
  *   via RemoveNodeAggregate, which Neos itself only issues on "live" — the UI tags a subtree as
@@ -45,6 +64,10 @@ final class CrCommandController extends CommandController
 
     /**
      * Create node aggregate
+     *
+     * Prints the ID of the created node aggregate to stdout, so that children can be hung off it:
+     *
+     *     GRID=$(./flow cr:createnodeaggregate ... --property-values='{}')
      *
      * @param string $contentRepository Identifier of the Content Repository
      * @param string $workspaceName The workspace in which the create operation is to be performed
@@ -64,17 +87,19 @@ final class CrCommandController extends CommandController
         try {
             $cr = $this->contentRepositoryRegistry->get(ContentRepositoryId::fromString($contentRepository));
             $nodeType = $cr->getNodeTypeManager()->getNodeType(NodeTypeName::fromString($nodeTypeName));
+            $nodeAggregateId = NodeAggregateId::create();
 
             $cr->handle(CreateNodeAggregateWithNode::create(
                 workspaceName: WorkspaceName::fromString($workspaceName),
-                nodeAggregateId: NodeAggregateId::create(),
+                nodeAggregateId: $nodeAggregateId,
                 nodeTypeName: NodeTypeName::fromString($nodeTypeName),
                 originDimensionSpacePoint: OriginDimensionSpacePoint::fromJsonString($originDimensionSpacePoint),
                 parentNodeAggregateId: NodeAggregateId::fromString($parentNodeId),
                 initialPropertyValues: PropertyValuesParser::parse($propertyValues, self::propertyTypesOf($nodeType))
             ));
 
-            $this->outputLine('<success>Created node of type %s in workspace %s.</success>', [$nodeTypeName, $workspaceName]);
+            $this->outputMessage('<success>Created node %s of type %s in workspace %s.</success>', [$nodeAggregateId->value, $nodeTypeName, $workspaceName]);
+            $this->outputResult($nodeAggregateId->value);
         } catch (\Exception $exception) {
             $this->fail($exception);
         }
@@ -114,7 +139,7 @@ final class CrCommandController extends CommandController
                 propertyValues: PropertyValuesParser::parse($propertyValues, self::propertyTypesOf($nodeType))
             ));
 
-            $this->outputLine('<success>Set node properties of node %s in workspace %s.</success>', [$nodeAggregateId, $workspaceName]);
+            $this->outputMessage('<success>Set node properties of node %s in workspace %s.</success>', [$nodeAggregateId, $workspaceName]);
         } catch (\Exception $exception) {
             $this->fail($exception);
         }
@@ -149,14 +174,130 @@ final class CrCommandController extends CommandController
                 nodeVariantSelectionStrategy: VariantSelectionStrategyParser::parse($nodeVariantSelectionStrategy)
             ));
 
-            $this->outputLine('<success>Removed node %s in workspace %s.</success>', [$nodeAggregateId, $workspaceName]);
+            $this->outputMessage('<success>Removed node %s in workspace %s.</success>', [$nodeAggregateId, $workspaceName]);
         } catch (\Exception $exception) {
             $this->fail($exception);
         }
     }
 
     /**
-     * Reports a failure as one error line and exits non-zero.
+     * Find a node aggregate by its absolute path
+     *
+     * Prints the node aggregate ID to stdout. An absolute path starts at the root node, written as
+     * its node type in angle brackets, and continues with node names:
+     *
+     *     MAIN=$(./flow cr:findnodeaggregate --content-repository default --workspace-name live \
+     *       --dimension-space-point '{"language":"de"}' --path '/<Neos.Neos:Sites>/site/main')
+     *
+     * @param string $contentRepository Identifier of the Content Repository
+     * @param string $workspaceName The workspace to look in
+     * @param string $dimensionSpacePoint The dimension space point to look in
+     * @param string $path The absolute node path, e.g. /<Neos.Neos:Sites>/site/main
+     */
+    public function findNodeAggregateCommand(
+        string $contentRepository,
+        string $workspaceName,
+        string $dimensionSpacePoint,
+        string $path
+    ): void {
+        try {
+            $node = $this->subgraph($contentRepository, $workspaceName, $dimensionSpacePoint)
+                ->findNodeByAbsolutePath(AbsoluteNodePath::fromString($path));
+
+            if ($node === null) {
+                throw new \RuntimeException(
+                    sprintf('No node exists at "%s" in workspace %s.', $path, $workspaceName),
+                    1787097604
+                );
+            }
+
+            $this->outputResult($node->aggregateId->value);
+        } catch (\Exception $exception) {
+            $this->fail($exception);
+        }
+    }
+
+    /**
+     * Find the child nodes of a node aggregate
+     *
+     * Prints one node aggregate ID per line to stdout, in the order the children are arranged, and
+     * nothing at all when there are none — so a loop over the output simply does not run:
+     *
+     *     for id in $(./flow cr:findchildnodeaggregates ... --node-aggregate-id "$MAIN"); do ...
+     *
+     * @param string $contentRepository Identifier of the Content Repository
+     * @param string $workspaceName The workspace to look in
+     * @param string $dimensionSpacePoint The dimension space point to look in
+     * @param string $nodeAggregateId The identifier of the node aggregate whose children to find
+     */
+    public function findChildNodeAggregatesCommand(
+        string $contentRepository,
+        string $workspaceName,
+        string $dimensionSpacePoint,
+        string $nodeAggregateId
+    ): void {
+        try {
+            $children = $this->subgraph($contentRepository, $workspaceName, $dimensionSpacePoint)
+                ->findChildNodes(NodeAggregateId::fromString($nodeAggregateId), FindChildNodesFilter::create());
+
+            foreach ($children as $child) {
+                $this->outputResult($child->aggregateId->value);
+            }
+        } catch (\Exception $exception) {
+            $this->fail($exception);
+        }
+    }
+
+    /**
+     * The subgraph the find commands read, which is the unfiltered one.
+     *
+     * createEmpty() rather than withoutRestrictions(): the latter is deprecated, and despite its
+     * name it still excludes the "removed" subtree tag. A script clearing a collection has to see
+     * a soft-removed node — otherwise it is skipped, survives the rebuild, and the result is not
+     * the clean tree the script was written to produce.
+     */
+    private function subgraph(string $contentRepository, string $workspaceName, string $dimensionSpacePoint): ContentSubgraphInterface
+    {
+        return $this->contentRepositoryRegistry
+            ->get(ContentRepositoryId::fromString($contentRepository))
+            ->getContentGraph(WorkspaceName::fromString($workspaceName))
+            ->getSubgraph(
+                DimensionSpacePoint::fromJsonString($dimensionSpacePoint),
+                VisibilityConstraints::createEmpty()
+            );
+    }
+
+    /**
+     * Writes one result value to stdout, unformatted and on its own line.
+     *
+     * OUTPUT_RAW because a result is data: a value containing angle brackets must not be read as
+     * markup, and nothing may be added around it.
+     */
+    private function outputResult(string $value): void
+    {
+        $this->output->getOutput()->writeln($value, OutputInterface::OUTPUT_RAW);
+    }
+
+    /**
+     * Writes a message for the reader to stderr.
+     *
+     * The error stream carries its own formatter, which has none of Flow's styles registered and
+     * prints an unknown tag literally instead of stripping it — so the markup is resolved by the
+     * main formatter first. Output that is not a console (a buffer in a test, a redirect through
+     * something that collapses the streams) has no separate error stream, and falls back to one.
+     *
+     * @param array<int,string> $arguments
+     */
+    private function outputMessage(string $message, array $arguments = []): void
+    {
+        $output = $this->output->getOutput();
+        $formatted = $output->getFormatter()->format($arguments === [] ? $message : vsprintf($message, $arguments));
+
+        ($output instanceof ConsoleOutputInterface ? $output->getErrorOutput() : $output)->writeln($formatted);
+    }
+
+    /**
+     * Reports a failure as one error line on stderr and exits non-zero.
      *
      * Everything a command does sits inside the guarded block, value object construction included:
      * WorkspaceName::fromString('Not A Workspace') and DimensionSpacePoint::fromJsonString('nope')
@@ -165,7 +306,7 @@ final class CrCommandController extends CommandController
      */
     private function fail(\Exception $exception): void
     {
-        $this->outputLine('<error>Error:</error> %s', [$exception->getMessage()]);
+        $this->outputMessage('<error>Error:</error> %s', [$exception->getMessage()]);
         $this->quit(1);
     }
 
