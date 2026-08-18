@@ -4,13 +4,28 @@ CLI Commands for the Event Sourced Content Repository of Neos CMS.
 
 **Note:** This package is still work in progress. Use with care.
 
+## Output: stdout is data, stderr is everything else
+
+A command that has a result writes it to **stdout**, one value per line, with no markup and nothing else around it. Progress messages and errors go to **stderr**. So a result can be captured directly, and nothing has to be parsed out of it:
+
+```sh
+MAIN=$(flow cr:findnodeaggregate --content-repository default --workspace-name live \
+  --dimension-space-point '{"language": "de"}' --path '/<Neos.Neos:Sites>/site/main')
+
+GRID=$(flow cr:createnodeaggregate ... --parent-node-id "$MAIN" --property-values='{}')
+```
+
+Failures exit non-zero with a single sentence on stderr rather than a stack trace, so `set -e` is enough to stop a script.
+
+Two consequences worth knowing. This is why no command takes a node aggregate ID for the node it creates: creation reports the ID it minted, which is the same information without a second way to get it wrong. And because stdout is a contract, a `2>/dev/null` on one of these commands hides real failures — if you want quiet, check the exit code instead.
+
 ## Commands
 
-The CLI Commands directly dispatch Commands on the Content Repository. The Content Repository handles the Command and emits the Event to the Event Store.
+The `create` / `setnodeproperties` / `remove` commands directly dispatch Commands on the Content Repository. The Content Repository handles the Command and emits the Event to the Event Store. The `find` commands read the content graph, so that a script can locate the nodes it needs to act on.
 
 ### Create node aggregate
 
-Use `cr:createnodeaggregate` to create a new node aggregate.
+Use `cr:createnodeaggregate` to create a new node aggregate. It prints the new node aggregate ID to stdout.
 
 | Argument                    | Description                                                       | Example                                                     |
 | --------------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------- |
@@ -81,6 +96,48 @@ A node aggregate can cover several dimension space points, and the strategy deci
 | `allSpecializations` | `gsw`                         | The given point and everything more specific. What the Neos UI issues.   |
 
 The default is `allVariants`, which is what a seed script wiping a collection wants. Pass `allSpecializations` when peer variants — a separate translation, say — have to survive.
+
+### Find a node aggregate
+
+Use `cr:findnodeaggregate` to resolve an absolute node path to a node aggregate ID. An absolute path starts at the root node — written as its node type in angle brackets — and continues with node names.
+
+| Argument              | Description                          | Example                            |
+| --------------------- | ------------------------------------ | ---------------------------------- |
+| `contentRepository`   | Identifier of the Content Repository | `default`                          |
+| `workspaceName`       | The workspace to look in             | `live`                             |
+| `dimensionSpacePoint` | The dimension space point to look in | `{"language": "en"}`               |
+| `path`                | The absolute node path               | `/<Neos.Neos:Sites>/my-site/main`  |
+
+```
+flow cr:findnodeaggregate
+    --contentRepository default
+    --workspaceName live
+    --dimensionSpacePoint '{"language": "en"}'
+    --path '/<Neos.Neos:Sites>/my-site/main'
+```
+
+Exits non-zero if no node exists at the path, so a script that captures the result does not silently continue with an empty ID.
+
+### Find child node aggregates
+
+Use `cr:findchildnodeaggregates` to list the direct children of a node aggregate, one ID per line, in the order they are arranged. It prints nothing when there are none, so a loop over its output simply does not run.
+
+| Argument              | Description                                        | Example                                |
+| --------------------- | -------------------------------------------------- | -------------------------------------- |
+| `contentRepository`   | Identifier of the Content Repository               | `default`                              |
+| `workspaceName`       | The workspace to look in                           | `live`                                 |
+| `dimensionSpacePoint` | The dimension space point to look in               | `{"language": "en"}`                   |
+| `nodeAggregateId`     | The node aggregate whose children to find          | `213b1564-14df-4984-bccd-5c6d003179ef` |
+
+Clearing a collection is the two commands together:
+
+```sh
+for id in $(flow cr:findchildnodeaggregates ... --node-aggregate-id "$MAIN"); do
+  flow cr:removenodeaggregate ... --node-aggregate-id "$id" --covered-dimension-space-point "$DSP"
+done
+```
+
+Both `find` commands query the graph unfiltered, which includes nodes the Neos UI has tagged as removed. That is deliberate: a script clearing a collection has to see a soft-removed node, or it skips it, the node survives the rebuild, and the result is not the clean tree the script was written to produce.
 
 ### Passing property values
 
