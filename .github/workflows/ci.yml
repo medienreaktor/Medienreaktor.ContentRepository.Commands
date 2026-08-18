@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+  # Lets a release be re-verified without an empty commit.
+  workflow_dispatch:
+
+jobs:
+  ci:
+    name: Lint & Test (PHP ${{ matrix.php }})
+    # GitHub-hosted, unlike Medienreaktor.FigmaTools, which runs on the org's
+    # self-hosted runner. This repository is public and that one is private, and
+    # that one difference points the two in opposite directions: the org runner
+    # group is set to allows_public_repositories: false, so a job from here is
+    # never claimed and sits queued indefinitely next to an idle runner, while
+    # GitHub-hosted minutes are free and unlimited for public repositories.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # PHP comes from the official image rather than the runner, which keeps the
+    # matrix reproducible and carries the extensions Neos needs.
+    container:
+      image: php:${{ matrix.php }}-cli
+
+    strategy:
+      # Let every version report rather than killing the rest when the first fails.
+      fail-fast: false
+      matrix:
+        php: [ '8.3', '8.4', '8.5' ]
+
+    env:
+      # Installing Neos pulls well over a hundred packages as GitHub dist zips,
+      # which exhausts the 60-per-hour unauthenticated API limit. The token the
+      # workflow already has is enough to lift it.
+      COMPOSER_AUTH: '{"github-oauth":{"github.com":"${{ secrets.GITHUB_TOKEN }}"}}'
+
+    steps:
+      # The image carries no git, and actions/checkout needs one. unzip lets
+      # Composer use --prefer-dist rather than cloning every dependency.
+      - name: Install git and unzip
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends git unzip
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Composer
+        run: |
+          php -r "copy('https://getcomposer.org/installer', '/tmp/composer-setup.php');"
+          php /tmp/composer-setup.php --quiet --install-dir=/usr/local/bin --filename=composer
+          composer --version
+
+      # No extension setup step: everything Neos declares — json, mbstring, xml,
+      # xmlreader, zlib, tokenizer, dom — is enabled in the official images, and
+      # composer install verifies that for us.
+      - name: Install dependencies
+        run: composer install --no-progress --prefer-dist --optimize-autoloader
+
+      - name: Run Linting (PHPStan & PHP CodeSniffer)
+        run: composer lint
+
+      - name: Run Tests (PHPUnit)
+        run: composer test

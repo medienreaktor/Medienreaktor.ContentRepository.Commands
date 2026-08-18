@@ -1,0 +1,8 @@
+parameters:
+    level: 5
+    paths:
+        - Classes
+        - Tests
+    # The package supports PHP >= 8.3 and CI runs the 8.3/8.4/8.5 matrix, so analyse
+    # against the floor — otherwise 8.4-only syntax passes locally and fails CI.
+    phpVersion: 80300
