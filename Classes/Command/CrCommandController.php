@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Medienreaktor\ContentRepository\Commands\Command;
 
 use Medienreaktor\ContentRepository\Commands\Input\PropertyValuesParser;
+use Medienreaktor\ContentRepository\Commands\Input\VariantSelectionStrategyParser;
 use Neos\ContentRepository\Core\DimensionSpace\DimensionSpacePoint;
 use Neos\ContentRepository\Core\DimensionSpace\OriginDimensionSpacePoint;
 use Neos\ContentRepository\Core\Feature\NodeCreation\Command\CreateNodeAggregateWithNode;
@@ -129,12 +130,14 @@ final class CrCommandController extends CommandController
      * @param string $workspaceName The workspace in which the remove operation is to be performed
      * @param string $nodeAggregateId The identifier of the node aggregate to remove
      * @param string $coveredDimensionSpacePoint The dimension space point the node should be removed in
+     * @param string $nodeVariantSelectionStrategy Which further dimension space points to remove in: allVariants (default, every point the aggregate covers) or allSpecializations (the given point and everything more specific, as the Neos UI does it)
      */
     public function removeNodeAggregateCommand(
         string $contentRepository,
         string $workspaceName,
         string $nodeAggregateId,
-        string $coveredDimensionSpacePoint
+        string $coveredDimensionSpacePoint,
+        string $nodeVariantSelectionStrategy = NodeVariantSelectionStrategy::STRATEGY_ALL_VARIANTS->value
     ): void {
         try {
             $cr = $this->contentRepositoryRegistry->get(ContentRepositoryId::fromString($contentRepository));
@@ -143,7 +146,7 @@ final class CrCommandController extends CommandController
                 workspaceName: WorkspaceName::fromString($workspaceName),
                 nodeAggregateId: NodeAggregateId::fromString($nodeAggregateId),
                 coveredDimensionSpacePoint: DimensionSpacePoint::fromJsonString($coveredDimensionSpacePoint),
-                nodeVariantSelectionStrategy: NodeVariantSelectionStrategy::STRATEGY_ALL_VARIANTS
+                nodeVariantSelectionStrategy: VariantSelectionStrategyParser::parse($nodeVariantSelectionStrategy)
             ));
 
             $this->outputLine('<success>Removed node %s in workspace %s.</success>', [$nodeAggregateId, $workspaceName]);
