@@ -4,21 +4,6 @@ CLI Commands for the Event Sourced Content Repository of Neos CMS.
 
 **Note:** This package is still work in progress. Use with care.
 
-## Output: stdout is data, stderr is everything else
-
-A command that has a result writes it to **stdout**, one value per line, with no markup and nothing else around it. Progress messages and errors go to **stderr**. So a result can be captured directly, and nothing has to be parsed out of it:
-
-```sh
-MAIN=$(flow cr:findnodeaggregate --content-repository default --workspace-name live \
-  --dimension-space-point '{"language": "de"}' --path '/<Neos.Neos:Sites>/site/main')
-
-GRID=$(flow cr:createnodeaggregate ... --parent-node-id "$MAIN" --property-values='{}')
-```
-
-Failures exit non-zero with a single sentence on stderr rather than a stack trace, so `set -e` is enough to stop a script.
-
-Two consequences worth knowing. This is why no command takes a node aggregate ID for the node it creates: creation reports the ID it minted, which is the same information without a second way to get it wrong. And because stdout is a contract, a `2>/dev/null` on one of these commands hides real failures — if you want quiet, check the exit code instead.
-
 ## Commands
 
 The `create` / `setnodeproperties` / `remove` commands directly dispatch Commands on the Content Repository. The Content Repository handles the Command and emits the Event to the Event Store. The `find` commands read the content graph, so that a script can locate the nodes it needs to act on.
@@ -80,8 +65,6 @@ flow cr:removenodeaggregate
     --coveredDimensionSpacePoint '{"language": "en"}'
 ```
 
-This makes scripted content setup idempotent: remove a collection's children, then recreate them. Without it, a seed script can only append.
-
 #### This is a hard removal
 
 The node is really gone from the workspace it was removed in. That is *not* what the Neos UI does when an editor deletes a node — the UI tags the subtree as removed, so that the deletion can still be published or discarded like any other change. A hard removal in a user workspace cannot be discarded, so unless you know you want the event-level behaviour, remove in `live` and leave editorial deletions to the UI.
@@ -141,7 +124,7 @@ Both `find` commands query the graph unfiltered, which includes nodes the Neos U
 
 ### Passing property values
 
-`propertyValues` is a JSON object of property name => value. Two things about it are worth knowing.
+`propertyValues` is a JSON object of property name => value.
 
 **Attach the value with `=`.** A value containing an `=` is truncated in the detached form, because Flow glues the option name onto the value and then splits on the first `=` it finds. Any HTML attribute in a payload trips this:
 
