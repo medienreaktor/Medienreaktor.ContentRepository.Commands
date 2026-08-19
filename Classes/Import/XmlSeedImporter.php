@@ -13,6 +13,7 @@ use Neos\ContentRepository\Core\ContentRepository;
 use Neos\ContentRepository\Core\DimensionSpace\DimensionSpacePoint;
 use Neos\ContentRepository\Core\DimensionSpace\OriginDimensionSpacePoint;
 use Neos\ContentRepository\Core\Feature\NodeCreation\Command\CreateNodeAggregateWithNode;
+use Neos\ContentRepository\Core\Feature\NodeModification\Command\SetNodeProperties;
 use Neos\ContentRepository\Core\Feature\NodeModification\Dto\PropertyValuesToWrite;
 use Neos\ContentRepository\Core\Feature\NodeRemoval\Command\RemoveNodeAggregate;
 use Neos\ContentRepository\Core\NodeType\NodeType;
@@ -114,6 +115,8 @@ final class XmlSeedImporter
             $report->pagesVisited++;
 
             $onMessage(sprintf('Page %s: %s', $page->path, $document->nodeTypeName->value));
+
+            $this->writeDocumentProperties($page, $document, $contentRepository, $workspace, $assets, $declaredAssetIds, $onMessage, $report, $dryRun);
 
             if ($dryRun) {
                 $this->validateChildren(
@@ -293,7 +296,7 @@ final class XmlSeedImporter
     ): void {
         $nodeTypeName = NodeTypeName::fromString($parsed->nodeTypeName);
         $nodeType = self::requireNodeType($contentRepository, $nodeTypeName, $parsed->line);
-        $propertyValues = $this->propertyValuesOf($parsed, $nodeType, $assets, $declaredAssetIds, false);
+        $propertyValues = PropertyValuesToWrite::fromArray($this->propertyValuesOf($parsed, $nodeType, $assets, $declaredAssetIds, false, $report));
         $nodeAggregateId = NodeAggregateId::create();
 
         try {
@@ -376,7 +379,7 @@ final class XmlSeedImporter
         foreach ($content as $child) {
             $childNodeType = self::requireNodeType($contentRepository, NodeTypeName::fromString($child->nodeTypeName), $child->line);
 
-            $this->propertyValuesOf($child, $childNodeType, [], $declaredAssetIds, true);
+            $this->propertyValuesOf($child, $childNodeType, [], $declaredAssetIds, true, $report);
             $report->nodesCreated++;
 
             $this->validateChildren($child, $childNodeType, $contentRepository, $declaredAssetIds, $report);
@@ -497,15 +500,32 @@ final class XmlSeedImporter
     /**
      * The property values of one parsed node, converted to what its node type declares.
      *
+     * Two things can go wrong with a property, and they are not the same kind of problem:
+     *
+     * - **The node type does not declare it at all.** That is a typo, and the import stops. A seed
+     *   file is a statement of the desired state, and quietly dropping part of it would mean the
+     *   page that comes out is not the page that was asked for.
+     * - **It is declared as a reference, not a property.** Neos 9 keeps references separate from
+     *   properties — a node type spelling one `type: references` has it normalised out of
+     *   `properties` — and this format cannot express them yet. That is a limit of the importer
+     *   rather than a mistake in the file, so it warns and carries on with everything else.
+     *
      * @param array<string,AssetInterface> $assets
      * @param array<string,int> $declaredAssetIds Manifest id => the line it is declared on
+     * @return array<string,mixed>
      */
-    private function propertyValuesOf(ParsedNode $parsed, NodeType $nodeType, array $assets, array $declaredAssetIds, bool $dryRun): PropertyValuesToWrite
+    private function propertyValuesOf(ParsedNode $parsed, NodeType $nodeType, array $assets, array $declaredAssetIds, bool $dryRun, ImportReport $report): array
     {
         $values = [];
 
         foreach ($parsed->properties as $propertyName => $raw) {
             if (!$nodeType->hasProperty($propertyName)) {
+                if ($nodeType->hasReference($propertyName)) {
+                    $this->warn($report, sprintf('Line %d: "%s" of %s is a reference, not a property. This format cannot set references yet, so it was skipped.', $parsed->line, $propertyName, $parsed->nodeTypeName));
+
+                    continue;
+                }
+
                 throw new \RuntimeException(
                     sprintf('Line %d: %s has no property "%s".', $parsed->line, $parsed->nodeTypeName, $propertyName),
                     1787097680
@@ -545,7 +565,78 @@ final class XmlSeedImporter
             }
         }
 
-        return PropertyValuesToWrite::fromArray($values);
+        return $values;
+    }
+
+    /**
+     * Records a warning and puts it in front of the reader straight away.
+     *
+     * Both, because a warning buried in a summary after a hundred lines of progress is a warning
+     * nobody reads, and one that only streams past is one nobody can count.
+     */
+    private function warn(ImportReport $report, string $message): void
+    {
+        $report->warnings[] = $message;
+    }
+
+    /**
+     * Writes the properties the file puts on a document element.
+     *
+     * The document itself is matched rather than created, so its properties are a separate write
+     * from everything else. This is how the site node's own settings are seeded — a logo, a title —
+     * given that in Neos 9 the site node is a document in its own right.
+     *
+     * The origin is the node's, not the seed's: the document already exists, and its properties
+     * belong in the dimension it actually originates in.
+     *
+     * @param array<string,AssetInterface> $assets
+     * @param array<string,int> $declaredAssetIds
+     */
+    private function writeDocumentProperties(
+        ParsedPage $page,
+        Node $document,
+        ContentRepository $contentRepository,
+        WorkspaceName $workspace,
+        array $assets,
+        array $declaredAssetIds,
+        \Closure $onMessage,
+        ImportReport $report,
+        bool $dryRun,
+    ): void {
+        if ($page->document->properties === []) {
+            return;
+        }
+
+        $nodeType = self::requireNodeType($contentRepository, $document->nodeTypeName, $page->document->line);
+        $values = $this->propertyValuesOf($page->document, $nodeType, $assets, $declaredAssetIds, $dryRun, $report);
+
+        if ($values === []) {
+            return;
+        }
+
+        if ($dryRun) {
+            $report->documentsUpdated++;
+
+            return;
+        }
+
+        try {
+            $contentRepository->handle(SetNodeProperties::create(
+                workspaceName: $workspace,
+                nodeAggregateId: $document->aggregateId,
+                originDimensionSpacePoint: $document->originDimensionSpacePoint,
+                propertyValues: PropertyValuesToWrite::fromArray($values),
+            ));
+        } catch (\Exception $exception) {
+            throw new \RuntimeException(
+                sprintf('Line %d: the properties of <%s> could not be set: %s', $page->document->line, $page->document->nodeTypeName, $exception->getMessage()),
+                1787097684,
+                $exception
+            );
+        }
+
+        $report->documentsUpdated++;
+        $onMessage(sprintf('Set %d propert%s on %s.', count($values), count($values) === 1 ? 'y' : 'ies', $document->nodeTypeName->value));
     }
 
     /**

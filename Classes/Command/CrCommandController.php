@@ -252,9 +252,15 @@ final class CrCommandController extends CommandController
      *
      * See {@see \Medienreaktor\ContentRepository\Commands\Xml\SeedXmlParser} for the format and
      * {@see \Medienreaktor\ContentRepository\Commands\Import\XmlSeedImporter} for what the import
-     * does at each level. In short: a document named by a page path is matched, never created, and
-     * the content under it is rebuilt — so **an editor's changes to a seeded collection are lost**,
-     * which is the trade a seed makes and the reason not to point this at a site being worked on.
+     * does at each level. In short: a document named by a page path is matched rather than created,
+     * though the properties the file puts on it are written — which is how the site node's own
+     * settings are seeded, since in Neos 9 the site node is itself a document. The content under it
+     * is rebuilt, so **an editor's changes to a seeded collection are lost**, which is the trade a
+     * seed makes and the reason not to point this at a site being worked on.
+     *
+     * A property the node type does not declare is an error, because it is a typo. A property that
+     * is really a reference is a warning: Neos 9 keeps references separate from properties and this
+     * format cannot set them yet, which is the importer's limit rather than the file's mistake.
      *
      * Unlike the other commands here this one takes a --dry-run, because it is a whole file rather
      * than a single operation and there is a real question of whether it will read. A dry run walks
@@ -296,23 +302,33 @@ final class CrCommandController extends CommandController
                 $dryRun,
             );
 
+            foreach ($report->warnings as $warning) {
+                $this->outputMessage('<comment>Warning:</comment> %s', [$warning]);
+            }
+
+            $warnings = $report->warnings === []
+                ? ''
+                : sprintf(' %d warning(s).', count($report->warnings));
+
             if ($dryRun) {
                 $this->outputMessage(
-                    '<success>Checked %d node(s) in %d page(s). Nothing was written; the content already there was not read, so no removal count is given.</success>',
-                    [$report->nodesCreated, $report->pagesVisited]
+                    '<success>Checked %d node(s) and %d document(s) in %d page(s). Nothing was written; the content already there was not read, so no removal count is given.</success>%s',
+                    [$report->nodesCreated, $report->documentsUpdated, $report->pagesVisited, $warnings]
                 );
 
                 return;
             }
 
             $this->outputMessage(
-                '<success>Created %d node(s) in %d page(s), removed %d, assets: %d imported, %d reused.</success>',
+                '<success>Created %d node(s) in %d page(s), updated %d document(s), removed %d, assets: %d imported, %d reused.</success>%s',
                 [
                     $report->nodesCreated,
                     $report->pagesVisited,
+                    $report->documentsUpdated,
                     $report->nodesRemoved,
                     $report->assetsImported,
                     $report->assetsReused,
+                    $warnings,
                 ]
             );
         } catch (\Exception $exception) {

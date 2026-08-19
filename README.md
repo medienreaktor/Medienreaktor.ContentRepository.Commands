@@ -183,10 +183,11 @@ The file describes the tree it wants to exist, with node types as element names:
 
   <seed:manifest>
     <seed:asset id="hero" href="images/hero.png" title="Hero"/>
+    <seed:asset id="logo" href="images/logo.svg" title="Logo"/>
   </seed:manifest>
 
   <seed:page path="/">
-    <Acme.Site:Document.Page.Homepage>
+    <Acme.Site:Document.Page.Homepage title="Acme" logo="logo">
       <Acme.Site:Content.Hero image="hero" alternativeText="Rectangle 85">
         <prop:title>We power <span class="highlight">freedom.</span></prop:title>
       </Acme.Site:Content.Hero>
@@ -224,7 +225,7 @@ Values are converted to the type the node type declares, so `showDash="true"` ar
 
 The file is the desired state, and the level says what making it true means:
 
-- **A document named by a page path is matched, never created.** In Neos 9 the site node is itself a document — the homepage — and `site:create` made it. The import checks that the node type matches what the file says, so a file written for another page fails before anything is removed.
+- **A document named by a page path is matched, never created** — but the properties the file puts on it *are* written. In Neos 9 the site node is itself a document — the homepage — and `site:create` made it, so recreating it would take the site with it. Writing to it is how the site node's own settings get seeded: a title, a logo, favicons. The import checks that the node type matches what the file says, so a file written for another page fails before anything is removed.
 - **Content is rebuilt.** The children of every container the file describes are removed and written again in document order. A seed that appended would double its content on the second run, and one that merged would need identity the file does not carry. **So an editor's changes under a seeded collection are lost** — which is the trade a seed makes, and the reason not to point this at a site being worked on.
 
 Tethered nodes are never removed, because the node type says they are always there. Their content is rebuilt when the file describes it.
@@ -249,6 +250,23 @@ Where a name is needed, or wanted for clarity, `seed:name` gives it:
   </Neos.Neos:ContentCollection>
 </Acme.Site:Content.Columns.Two>
 ```
+
+#### A typo is an error, a reference is a warning
+
+A property the node type does not declare stops the import. It is a typo, and a seed file is a statement of the desired state — quietly dropping part of it would mean the page that comes out is not the page that was asked for:
+
+```
+Error: Line 6: Medienreaktor.Site:Document.Page.Homepage has no property "titel".
+```
+
+A property that is really a *reference* warns instead, and the rest of the import proceeds. Neos 9 keeps references separate from properties — a node type that spells one `type: references` has it normalised out of `properties` into the node type's `references` section, so `hasProperty()` is false for it — and this format cannot set references yet. That is the importer's limit rather than a mistake in the file, so it should not stop the other forty-odd nodes from being seeded:
+
+```
+Warning: Line 10: "footerItems" of Medienreaktor.Site:Document.Page.Homepage is a reference, not a property. This format cannot set references yet, so it was skipped.
+Created 0 node(s) in 1 page(s), updated 1 document(s), removed 0, assets: 0 imported, 1 reused. 1 warning(s).
+```
+
+Warnings are printed as they are collected *and* counted in the summary: one buried under a hundred progress lines is a warning nobody reads, and one that only streams past is one nobody can count.
 
 #### Assets are declared once and referenced by id
 
