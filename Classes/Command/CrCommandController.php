@@ -6,6 +6,7 @@ namespace Medienreaktor\ContentRepository\Commands\Command;
 
 use Medienreaktor\ContentRepository\Commands\Input\PropertyValuesParser;
 use Medienreaktor\ContentRepository\Commands\Input\VariantSelectionStrategyParser;
+use Medienreaktor\ContentRepository\Commands\Media\AssetImporter;
 use Neos\ContentRepository\Core\DimensionSpace\DimensionSpacePoint;
 use Neos\ContentRepository\Core\DimensionSpace\OriginDimensionSpacePoint;
 use Neos\ContentRepository\Core\Feature\NodeCreation\Command\CreateNodeAggregateWithNode;
@@ -24,10 +25,6 @@ use Neos\ContentRepository\Core\SharedModel\Workspace\WorkspaceName;
 use Neos\ContentRepositoryRegistry\ContentRepositoryRegistry;
 use Neos\Flow\Annotations as Flow;
 use Neos\Flow\Cli\CommandController;
-use Neos\Flow\Persistence\PersistenceManagerInterface;
-use Neos\Flow\ResourceManagement\ResourceManager;
-use Neos\Media\Domain\Repository\AssetRepository;
-use Neos\Media\Domain\Strategy\AssetModelMappingStrategyInterface;
 use Neos\Utility\TypeHandling;
 use Symfony\Component\Console\Output\ConsoleOutputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
@@ -71,16 +68,7 @@ final class CrCommandController extends CommandController
     protected PropertyValuesParser $propertyValuesParser;
 
     #[Flow\Inject]
-    protected PersistenceManagerInterface $persistenceManager;
-
-    #[Flow\Inject]
-    protected ResourceManager $resourceManager;
-
-    #[Flow\Inject]
-    protected AssetRepository $assetRepository;
-
-    #[Flow\Inject]
-    protected AssetModelMappingStrategyInterface $assetModelMappingStrategy;
+    protected AssetImporter $assetImporter;
 
     /**
      * Create node aggregate
@@ -218,43 +206,25 @@ final class CrCommandController extends CommandController
      * SHA-1 of the content, which is what the media library itself deduplicates on: a renamed copy
      * of a file already imported is the same asset, and an edited one is a new asset.
      *
-     * @param string $file Path to the file to import, absolute or relative to the current directory
+     * @param string $file Path to the file to import, absolute or relative to the current directory, or an http(s) URL
      * @param string|null $title Title of the asset, as it appears in the media browser. Defaults to the file name.
      * @param bool $reference Print the property value {"__flow_object_type": …, "__identifier": …} instead of the bare identifier
      */
     public function importAssetCommand(string $file, ?string $title = null, bool $reference = false): void
     {
         try {
-            if (!is_file($file) || !is_readable($file)) {
-                throw new \RuntimeException(sprintf('The file "%s" does not exist or cannot be read.', $file), 1787097608);
-            }
+            $result = $this->assetImporter->import($file, $title);
+            $asset = $result['asset'];
 
-            $sha1 = sha1_file($file);
-            $asset = $sha1 === false ? null : $this->assetRepository->findOneByResourceSha1($sha1);
-
-            if ($asset === null) {
-                // importResource() reads the file name off the path, so the asset arrives in the
-                // media browser under the name it has on disk.
-                $resource = $this->resourceManager->importResource($file);
-                $className = $this->assetModelMappingStrategy->map($resource);
-
-                /** @var \Neos\Media\Domain\Model\AssetInterface $asset */
-                $asset = new $className($resource);
-                $asset->setTitle($title ?? basename($file));
-
-                $this->assetRepository->add($asset);
-
-                // Each ./flow call is its own process, so the asset has to be on disk before the
-                // command that references it starts.
-                $this->persistenceManager->persistAll();
-
-                $this->outputMessage('<success>Imported %s as %s.</success>', [$file, $className]);
-            } else {
+            if ($result['reused']) {
                 $this->outputMessage('<success>Reused the asset already imported from %s.</success>', [$file]);
+            } else {
+                $this->assetImporter->persist();
+                $this->outputMessage('<success>Imported %s as %s.</success>', [$file, TypeHandling::getTypeForValue($asset)]);
             }
 
-            $identifier = $this->persistenceManager->getIdentifierByObject($asset);
-            $this->outputResult($reference ? self::referenceTo($asset, (string)$identifier) : (string)$identifier);
+            $identifier = $this->assetImporter->identifierOf($asset);
+            $this->outputResult($reference ? self::referenceTo($asset, $identifier) : $identifier);
         } catch (\Exception $exception) {
             $this->fail($exception);
         }
