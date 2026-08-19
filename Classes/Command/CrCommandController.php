@@ -24,6 +24,11 @@ use Neos\ContentRepository\Core\SharedModel\Workspace\WorkspaceName;
 use Neos\ContentRepositoryRegistry\ContentRepositoryRegistry;
 use Neos\Flow\Annotations as Flow;
 use Neos\Flow\Cli\CommandController;
+use Neos\Flow\Persistence\PersistenceManagerInterface;
+use Neos\Flow\ResourceManagement\ResourceManager;
+use Neos\Media\Domain\Repository\AssetRepository;
+use Neos\Media\Domain\Strategy\AssetModelMappingStrategyInterface;
+use Neos\Utility\TypeHandling;
 use Symfony\Component\Console\Output\ConsoleOutputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 
@@ -62,6 +67,21 @@ final class CrCommandController extends CommandController
     #[Flow\Inject]
     protected ContentRepositoryRegistry $contentRepositoryRegistry;
 
+    #[Flow\Inject]
+    protected PropertyValuesParser $propertyValuesParser;
+
+    #[Flow\Inject]
+    protected PersistenceManagerInterface $persistenceManager;
+
+    #[Flow\Inject]
+    protected ResourceManager $resourceManager;
+
+    #[Flow\Inject]
+    protected AssetRepository $assetRepository;
+
+    #[Flow\Inject]
+    protected AssetModelMappingStrategyInterface $assetModelMappingStrategy;
+
     /**
      * Create node aggregate
      *
@@ -95,7 +115,7 @@ final class CrCommandController extends CommandController
                 nodeTypeName: NodeTypeName::fromString($nodeTypeName),
                 originDimensionSpacePoint: OriginDimensionSpacePoint::fromJsonString($originDimensionSpacePoint),
                 parentNodeAggregateId: NodeAggregateId::fromString($parentNodeId),
-                initialPropertyValues: PropertyValuesParser::parse($propertyValues, self::propertyTypesOf($nodeType))
+                initialPropertyValues: $this->propertyValuesParser->parse($propertyValues, self::propertyTypesOf($nodeType))
             ));
 
             $this->outputMessage('<success>Created node %s of type %s in workspace %s.</success>', [$nodeAggregateId->value, $nodeTypeName, $workspaceName]);
@@ -136,7 +156,7 @@ final class CrCommandController extends CommandController
                 workspaceName: WorkspaceName::fromString($workspaceName),
                 nodeAggregateId: NodeAggregateId::fromString($nodeAggregateId),
                 originDimensionSpacePoint: OriginDimensionSpacePoint::fromJsonString($originDimensionSpacePoint),
-                propertyValues: PropertyValuesParser::parse($propertyValues, self::propertyTypesOf($nodeType))
+                propertyValues: $this->propertyValuesParser->parse($propertyValues, self::propertyTypesOf($nodeType))
             ));
 
             $this->outputMessage('<success>Set node properties of node %s in workspace %s.</success>', [$nodeAggregateId, $workspaceName]);
@@ -175,6 +195,66 @@ final class CrCommandController extends CommandController
             ));
 
             $this->outputMessage('<success>Removed node %s in workspace %s.</success>', [$nodeAggregateId, $workspaceName]);
+        } catch (\Exception $exception) {
+            $this->fail($exception);
+        }
+    }
+
+    /**
+     * Import a file into the media library
+     *
+     * A node property declared as an asset holds the asset itself, so a script that seeds such a
+     * node needs the file in the media library first. Neos has no command for that — media:importresources
+     * picks up resources Flow already knows about, which is the second half of the job, not this one.
+     *
+     * Prints the asset identifier to stdout, or with --reference the property value that carries
+     * it, ready to be dropped into the JSON that cr:createnodeaggregate takes:
+     *
+     *     IMAGE=$(./flow cr:importasset --file hero.png --reference)
+     *     ./flow cr:createnodeaggregate ... --property-values="{\"image\":$IMAGE}"
+     *
+     * Importing the same file twice returns the asset from the first time rather than a second
+     * copy of it, so re-running a seed script leaves the media library as it was. Sameness is the
+     * SHA-1 of the content, which is what the media library itself deduplicates on: a renamed copy
+     * of a file already imported is the same asset, and an edited one is a new asset.
+     *
+     * @param string $file Path to the file to import, absolute or relative to the current directory
+     * @param string|null $title Title of the asset, as it appears in the media browser. Defaults to the file name.
+     * @param bool $reference Print the property value {"__flow_object_type": …, "__identifier": …} instead of the bare identifier
+     */
+    public function importAssetCommand(string $file, ?string $title = null, bool $reference = false): void
+    {
+        try {
+            if (!is_file($file) || !is_readable($file)) {
+                throw new \RuntimeException(sprintf('The file "%s" does not exist or cannot be read.', $file), 1787097608);
+            }
+
+            $sha1 = sha1_file($file);
+            $asset = $sha1 === false ? null : $this->assetRepository->findOneByResourceSha1($sha1);
+
+            if ($asset === null) {
+                // importResource() reads the file name off the path, so the asset arrives in the
+                // media browser under the name it has on disk.
+                $resource = $this->resourceManager->importResource($file);
+                $className = $this->assetModelMappingStrategy->map($resource);
+
+                /** @var \Neos\Media\Domain\Model\AssetInterface $asset */
+                $asset = new $className($resource);
+                $asset->setTitle($title ?? basename($file));
+
+                $this->assetRepository->add($asset);
+
+                // Each ./flow call is its own process, so the asset has to be on disk before the
+                // command that references it starts.
+                $this->persistenceManager->persistAll();
+
+                $this->outputMessage('<success>Imported %s as %s.</success>', [$file, $className]);
+            } else {
+                $this->outputMessage('<success>Reused the asset already imported from %s.</success>', [$file]);
+            }
+
+            $identifier = $this->persistenceManager->getIdentifierByObject($asset);
+            $this->outputResult($reference ? self::referenceTo($asset, (string)$identifier) : (string)$identifier);
         } catch (\Exception $exception) {
             $this->fail($exception);
         }
@@ -308,6 +388,23 @@ final class CrCommandController extends CommandController
     {
         $this->outputMessage('<error>Error:</error> %s', [$exception->getMessage()]);
         $this->quit(1);
+    }
+
+    /**
+     * The property value that refers to a persisted object, as PropertyValuesParser reads it.
+     *
+     * getTypeForValue() rather than get_class(), for the same reason the Content Repository's own
+     * normalizer uses it: a Doctrine proxy answers get_class() with its generated name, and that
+     * name means nothing to a later lookup.
+     *
+     * @throws \JsonException
+     */
+    private static function referenceTo(object $object, string $identifier): string
+    {
+        return json_encode([
+            '__flow_object_type' => TypeHandling::getTypeForValue($object),
+            '__identifier' => $identifier,
+        ], JSON_THROW_ON_ERROR);
     }
 
     /**

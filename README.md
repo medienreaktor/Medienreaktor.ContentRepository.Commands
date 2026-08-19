@@ -6,7 +6,7 @@ CLI Commands for the Event Sourced Content Repository of Neos CMS.
 
 ## Commands
 
-The `create` / `setnodeproperties` / `remove` commands directly dispatch Commands on the Content Repository. The Content Repository handles the Command and emits the Event to the Event Store. The `find` commands read the content graph, so that a script can locate the nodes it needs to act on.
+The `create` / `setnodeproperties` / `remove` commands directly dispatch Commands on the Content Repository. The Content Repository handles the Command and emits the Event to the Event Store. The `find` commands read the content graph, so that a script can locate the nodes it needs to act on. `importasset` puts a file into the media library, so that a script can fill an asset property.
 
 ### Create node aggregate
 
@@ -122,6 +122,37 @@ done
 
 Both `find` commands query the graph unfiltered, which includes nodes the Neos UI has tagged as removed. That is deliberate: a script clearing a collection has to see a soft-removed node, or it skips it, the node survives the rebuild, and the result is not the clean tree the script was written to produce.
 
+### Import an asset
+
+Use `cr:importasset` to import a file into the media library. It prints the asset identifier to stdout.
+
+| Argument    | Description                                                                                             | Example                                      |
+| ----------- | ------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| `file`      | Path to the file to import, absolute or relative to the current directory                                | `seed/hero.png`                              |
+| `title`     | Optional. Title of the asset, as it appears in the media browser. Defaults to the file name.             | `Hero`                                       |
+| `reference` | Optional. Print the property value that refers to the asset instead of the bare identifier.              | —                                            |
+
+A node property declared as an asset holds the asset itself, so seeding such a node means importing the file first. Neos has no command for that: `media:importresources` picks up resources Flow already knows about, which is the second half of the job rather than this one.
+
+The asset type follows the file, through the same mapping strategy the media library uses — a PNG becomes an `Image`, a PDF a `Document`.
+
+```
+flow cr:importasset --file seed/hero.png --title Hero
+```
+
+#### Importing twice does not import twice
+
+Sameness is the SHA-1 of the content, which is what the media library itself deduplicates on: a second import of the same file returns the asset from the first one instead of a copy. So a seed script can be re-run without the media library filling up with duplicates. A renamed copy of an imported file is the same asset; an edited one is a new asset.
+
+#### `--reference`
+
+The property value that refers to an asset is not the identifier alone (see below), so `--reference` prints the whole thing, ready to be dropped into the JSON that `cr:createnodeaggregate` takes:
+
+```sh
+IMAGE=$(flow cr:importasset --file seed/hero.png --reference)
+flow cr:createnodeaggregate ... --property-values="{\"image\":$IMAGE}"
+```
+
 ### Passing property values
 
 `propertyValues` is a JSON object of property name => value.
@@ -132,6 +163,16 @@ Both `find` commands query the graph unfiltered, which includes nodes the Neos U
 flow cr:createnodeaggregate ... --property-values '{"text": "<a href=\"/x\">y</a>"}'   # arrives as: \"/x\">y</a>"}
 flow cr:createnodeaggregate ... --property-values='{"text": "<a href=\"/x\">y</a>"}'   # correct
 ```
+
+**Assets and other persisted objects are referenced by class and identifier.** A property the node type declares as an entity holds the object itself, and the Content Repository accepts nothing else. The identifier alone cannot express it, because the declared type is usually an interface — `Neos\Media\Domain\Model\ImageInterface` — that Doctrine cannot map to a table, so the concrete class travels with it:
+
+```
+flow cr:createnodeaggregate ... --property-values='{"image": {"__flow_object_type": "Neos\\Media\\Domain\\Model\\Image", "__identifier": "…"}}'
+```
+
+That is the same shape the Content Repository writes when it serializes such a property, so a value read out of a node can be fed straight back in — and it is what `cr:importasset --reference` prints. A reference to something that no longer exists is an error rather than a `null`, which the Content Repository would read as "unset this property".
+
+A bare string is never taken for an identifier. Which properties are entities is not knowable from the value, and a string quietly turned into a failed lookup reports worse than the Content Repository does.
 
 **Dates are converted for you.** JSON has no date type, so a property the node type declares as `DateTime` (or `DateTimeImmutable`, or `DateTimeInterface`) is read from its string and passed on as a `\DateTimeImmutable`; the Content Repository rejects a plain string there. Every other value is passed through as it arrived, and the Content Repository decides whether it fits — so `{"title": "2026-08-19"}` stays a string.
 
