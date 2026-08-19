@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace Medienreaktor\ContentRepository\Commands\Command;
 
+use Medienreaktor\ContentRepository\Commands\Import\XmlSeedImporter;
 use Medienreaktor\ContentRepository\Commands\Input\PropertyValuesParser;
 use Medienreaktor\ContentRepository\Commands\Input\VariantSelectionStrategyParser;
 use Medienreaktor\ContentRepository\Commands\Media\AssetImporter;
+use Medienreaktor\ContentRepository\Commands\Xml\SeedXmlParser;
 use Neos\ContentRepository\Core\DimensionSpace\DimensionSpacePoint;
 use Neos\ContentRepository\Core\DimensionSpace\OriginDimensionSpacePoint;
 use Neos\ContentRepository\Core\Feature\NodeCreation\Command\CreateNodeAggregateWithNode;
@@ -33,9 +35,13 @@ use Symfony\Component\Console\Output\OutputInterface;
  * The Content Repository Command Controller
  *
  * The write commands each build one Content Repository command and hand it over; the Content
- * Repository validates it and emits the resulting event. The find commands read the graph. Nothing
- * here prompts for confirmation or offers a dry run, because these are scripting primitives meant
+ * Repository validates it and emits the resulting event. The find commands read the graph. None of
+ * those prompts for confirmation or offers a dry run, because they are scripting primitives meant
  * to be composed in seed and import scripts.
+ *
+ * cr:importxml is the exception, and deliberately so: it takes a file describing a whole content
+ * tree rather than a single operation, so there is a real question of whether that file reads, and
+ * --dry-run answers it.
  *
  * **The output contract: stdout carries data, stderr carries everything else.** A command that has
  * a result — the ID of a created node, the IDs a query matched — writes it to stdout, one value per
@@ -69,6 +75,12 @@ final class CrCommandController extends CommandController
 
     #[Flow\Inject]
     protected AssetImporter $assetImporter;
+
+    #[Flow\Inject]
+    protected SeedXmlParser $seedXmlParser;
+
+    #[Flow\Inject]
+    protected XmlSeedImporter $xmlSeedImporter;
 
     /**
      * Create node aggregate
@@ -231,6 +243,84 @@ final class CrCommandController extends CommandController
     }
 
     /**
+     * Import a content tree from a seed XML file
+     *
+     * The file describes the tree it wants to exist, with node types as element names, and the
+     * import makes the graph match it:
+     *
+     *     ./flow cr:importxml --file seed/LandingPage.xml
+     *
+     * See {@see \Medienreaktor\ContentRepository\Commands\Xml\SeedXmlParser} for the format and
+     * {@see \Medienreaktor\ContentRepository\Commands\Import\XmlSeedImporter} for what the import
+     * does at each level. In short: a document named by a page path is matched, never created, and
+     * the content under it is rebuilt — so **an editor's changes to a seeded collection are lost**,
+     * which is the trade a seed makes and the reason not to point this at a site being worked on.
+     *
+     * Unlike the other commands here this one takes a --dry-run, because it is a whole file rather
+     * than a single operation and there is a real question of whether it will read. A dry run walks
+     * the whole tree, resolving every node type and property and checking that each asset reference
+     * is declared and each manifest file is there, and writes nothing. What it cannot check is the
+     * Content Repository's own constraints — whether this node type may sit under that one is
+     * answered by handling the command, and a dry run issues none. It is a proofread, not a
+     * rehearsal.
+     *
+     * @param string $file Path to the seed XML file
+     * @param string $workspaceName The workspace to write to
+     * @param bool $dryRun Report what the import would do, and write nothing
+     */
+    public function importXmlCommand(string $file, string $workspaceName = 'live', bool $dryRun = false): void
+    {
+        try {
+            $site = $this->seedXmlParser->parseFile($file);
+
+            $this->outputMessage(
+                '<success>%s: site "%s", content repository "%s", dimension %s, %d page(s).</success>',
+                [
+                    $dryRun ? 'Would import' : 'Importing',
+                    $site->siteNodeName,
+                    $site->contentRepositoryId,
+                    $site->dimensionSpacePoint === [] ? '(none)' : json_encode($site->dimensionSpacePoint, JSON_THROW_ON_ERROR),
+                    count($site->pages),
+                ]
+            );
+
+            $report = $this->xmlSeedImporter->import(
+                $site,
+                $workspaceName,
+                // A relative href in the manifest is relative to the file that wrote it, not to
+                // wherever the command happens to be run from.
+                dirname((string)realpath($file)),
+                function (string $message): void {
+                    $this->outputMessage('%s', [$message]);
+                },
+                $dryRun,
+            );
+
+            if ($dryRun) {
+                $this->outputMessage(
+                    '<success>Checked %d node(s) in %d page(s). Nothing was written; the content already there was not read, so no removal count is given.</success>',
+                    [$report->nodesCreated, $report->pagesVisited]
+                );
+
+                return;
+            }
+
+            $this->outputMessage(
+                '<success>Created %d node(s) in %d page(s), removed %d, assets: %d imported, %d reused.</success>',
+                [
+                    $report->nodesCreated,
+                    $report->pagesVisited,
+                    $report->nodesRemoved,
+                    $report->assetsImported,
+                    $report->assetsReused,
+                ]
+            );
+        } catch (\Exception $exception) {
+            $this->fail($exception);
+        }
+    }
+
+    /**
      * Find a node aggregate by its absolute path
      *
      * Prints the node aggregate ID to stdout. An absolute path starts at the root node, written as
@@ -336,7 +426,7 @@ final class CrCommandController extends CommandController
      * main formatter first. Output that is not a console (a buffer in a test, a redirect through
      * something that collapses the streams) has no separate error stream, and falls back to one.
      *
-     * @param array<int,string> $arguments
+     * @param array<int,string|int> $arguments
      */
     private function outputMessage(string $message, array $arguments = []): void
     {
