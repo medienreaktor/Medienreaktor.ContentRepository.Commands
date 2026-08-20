@@ -252,11 +252,17 @@ final class CrCommandController extends CommandController
      *
      * See {@see \Medienreaktor\ContentRepository\Commands\Xml\SeedXmlParser} for the format and
      * {@see \Medienreaktor\ContentRepository\Commands\Import\XmlSeedImporter} for what the import
-     * does at each level. In short: a document named by a page path is matched rather than created,
-     * though the properties the file puts on it are written — which is how the site node's own
-     * settings are seeded, since in Neos 9 the site node is itself a document. The content under it
-     * is rebuilt, so **an editor's changes to a seeded collection are lost**, which is the trade a
-     * seed makes and the reason not to point this at a site being worked on.
+     * does at each level. **The file is the whole truth about what it describes.** Running it on two
+     * instances leaves them with the same tree whatever state they were in: content is rebuilt, a
+     * collection the file says nothing about is emptied, and a matched node's properties are brought
+     * to exactly what the file gives them — so dropping a property from the XML unsets it rather
+     * than leaving the old value behind. **An editor's changes under a seeded page are therefore
+     * lost**, which is the trade a seed makes and the reason not to point this at a site being
+     * worked on.
+     *
+     * A document named by a page path is matched rather than created, since in Neos 9 the site node
+     * is itself a document and recreating it would take the site with it. Its properties are still
+     * written, which is how a site's own settings get seeded.
      *
      * A property the node type does not declare is an error, because it is a typo. A property that
      * is really a reference is a warning: Neos 9 keeps references separate from properties and this
@@ -312,19 +318,19 @@ final class CrCommandController extends CommandController
 
             if ($dryRun) {
                 $this->outputMessage(
-                    '<success>Checked %d node(s) and %d document(s) in %d page(s). Nothing was written; the content already there was not read, so no removal count is given.</success>%s',
-                    [$report->nodesCreated, $report->documentsUpdated, $report->pagesVisited, $warnings]
+                    '<success>Checked %d node(s) in %d page(s). Nothing was written; the content already there was not read, so no removal count is given.</success>%s',
+                    [$report->nodesCreated, $report->pagesVisited, $warnings]
                 );
 
                 return;
             }
 
             $this->outputMessage(
-                '<success>Created %d node(s) in %d page(s), updated %d document(s), removed %d, assets: %d imported, %d reused.</success>%s',
+                '<success>Created %d node(s) in %d page(s), reconciled %d matched node(s), removed %d, assets: %d imported, %d reused.</success>%s',
                 [
                     $report->nodesCreated,
                     $report->pagesVisited,
-                    $report->documentsUpdated,
+                    $report->nodesReconciled,
                     $report->nodesRemoved,
                     $report->assetsImported,
                     $report->assetsReused,

@@ -116,19 +116,16 @@ final class XmlSeedImporter
 
             $onMessage(sprintf('Page %s: %s', $page->path, $document->nodeTypeName->value));
 
-            $this->writeDocumentProperties($page, $document, $contentRepository, $workspace, $assets, $declaredAssetIds, $onMessage, $report, $dryRun);
-
             if ($dryRun) {
-                $this->validateChildren(
-                    $page->document,
-                    self::requireNodeType($contentRepository, $document->nodeTypeName, $page->document->line),
-                    $contentRepository,
-                    $declaredAssetIds,
-                    $report,
-                );
+                $documentNodeType = self::requireNodeType($contentRepository, $document->nodeTypeName, $page->document->line);
+
+                $this->propertyValuesOf($page->document, $documentNodeType, $assets, $declaredAssetIds, true, $report);
+                $this->validateChildren($page->document, $documentNodeType, $contentRepository, $declaredAssetIds, $report);
 
                 continue;
             }
+
+            $this->reconcileProperties($page->document, $document, $contentRepository, $workspace, $assets, $declaredAssetIds, $report);
 
             $this->importChildren(
                 $page->document,
@@ -246,32 +243,64 @@ final class XmlSeedImporter
         \Closure $onMessage,
         ImportReport $report,
     ): void {
-        if ($parsed->children === []) {
-            return;
-        }
-
         $nodeType = self::requireNodeType($contentRepository, $node->nodeTypeName, $parsed->line);
 
         [$tethered, $content] = self::partitionChildren($parsed->children);
 
+        // Which content collections the file spoke about. Whatever is left over is emptied below:
+        // the file is the whole truth about this node, so a collection it says nothing about holds
+        // nothing, and an import onto a populated instance ends up where a fresh one does.
+        $addressed = [];
+
         foreach ($tethered as $child) {
             $definition = self::tetheredDefinitionFor($child, $nodeType, $node->nodeTypeName->value);
             $target = $this->requireChildByName($node, $definition->name, $subgraph, $child->line);
+            $addressed[$definition->name->value] = true;
 
+            $this->reconcileProperties($child, $target, $contentRepository, $workspace, $assets, $declaredAssetIds, $report);
             $this->importChildren($child, $target, $contentRepository, $subgraph, $workspace, $origin, $dimensionSpacePoint, $assets, $declaredAssetIds, $onMessage, $report);
         }
 
-        if ($content === []) {
-            return;
+        if ($content !== []) {
+            $collection = $this->contentCollectionOf($parsed, $nodeType, $contentRepository);
+            $container = $collection === null ? $node : $this->requireChildByName($node, $collection->name, $subgraph, $parsed->line);
+
+            if ($collection !== null) {
+                $addressed[$collection->name->value] = true;
+            }
+
+            $this->removeChildrenOf($container, $subgraph, $contentRepository, $workspace, $dimensionSpacePoint, $report);
+
+            foreach ($content as $child) {
+                $this->create($child, $container, $contentRepository, $subgraph, $workspace, $origin, $dimensionSpacePoint, $assets, $declaredAssetIds, $onMessage, $report);
+            }
+        } elseif ($nodeType->isOfType(self::CONTENT_COLLECTION_NODE_TYPE)) {
+            // The node is a collection and the file gives it nothing, so it holds nothing.
+            $this->removeChildrenOf($node, $subgraph, $contentRepository, $workspace, $dimensionSpacePoint, $report);
         }
 
-        $collection = $this->contentCollectionOf($parsed, $nodeType, $contentRepository);
-        $container = $collection === null ? $node : $this->requireChildByName($node, $collection->name, $subgraph, $parsed->line);
+        // contentCollectionOf() is deliberately not consulted here: it refuses to choose between
+        // several collections, and emptying does not have to choose -- every one of them that the
+        // file left unmentioned is cleared.
+        foreach ($nodeType->tetheredNodeTypeDefinitions as $definition) {
+            if (isset($addressed[$definition->name->value])) {
+                continue;
+            }
 
-        $this->removeChildrenOf($container, $subgraph, $contentRepository, $workspace, $dimensionSpacePoint, $report);
+            $tetheredNodeType = $contentRepository->getNodeTypeManager()->getNodeType($definition->nodeTypeName);
 
-        foreach ($content as $child) {
-            $this->create($child, $container, $contentRepository, $subgraph, $workspace, $origin, $dimensionSpacePoint, $assets, $declaredAssetIds, $onMessage, $report);
+            if ($tetheredNodeType?->isOfType(self::CONTENT_COLLECTION_NODE_TYPE) !== true) {
+                continue;
+            }
+
+            $this->removeChildrenOf(
+                $this->requireChildByName($node, $definition->name, $subgraph, $parsed->line),
+                $subgraph,
+                $contentRepository,
+                $workspace,
+                $dimensionSpacePoint,
+                $report
+            );
         }
     }
 
@@ -580,63 +609,72 @@ final class XmlSeedImporter
     }
 
     /**
-     * Writes the properties the file puts on a document element.
+     * Brings a matched node's properties to exactly what the file says they are.
      *
-     * The document itself is matched rather than created, so its properties are a separate write
-     * from everything else. This is how the site node's own settings are seeded — a logo, a title —
-     * given that in Neos 9 the site node is a document in its own right.
+     * A node the import creates gets its properties from the file and nothing else, so it is
+     * already authoritative. A node the import only *matches* -- a document, a tethered collection
+     * -- carries whatever it happened to have, and writing just the properties the file mentions
+     * would leave the rest behind: drop a property from the XML and it would still be set, so the
+     * same file would mean different things on two instances.
      *
-     * The origin is the node's, not the seed's: the document already exists, and its properties
-     * belong in the dimension it actually originates in.
+     * So the whole property set is written: what the file gives, and an explicit unset for every
+     * other property the node type declares. Two instances therefore end up the same whatever they
+     * held before -- a value that was set becomes unset, one that was already unset stays unset.
+     *
+     * Node type *defaults* are deliberately not written for the properties the file leaves out. It
+     * would make a matched node identical to a freshly created one, which is tempting, but it makes
+     * the seed hostage to every default being internally consistent -- and they are not. This very
+     * project declares `seo.organization.sameAs` as `type: string` with `defaultValue: [ ]`, which
+     * the Content Repository rightly refuses to write. A seed should not fail over a default it was
+     * never asked to set. The consequence, stated plainly: a created node starts from its node
+     * type's defaults, a matched one starts from nothing. Both are determined by the file, which is
+     * what the guarantee actually requires.
+     *
+     * The origin is the node's own, not the seed's: the node already exists, and its properties
+     * belong in the dimension it originates in.
      *
      * @param array<string,AssetInterface> $assets
      * @param array<string,int> $declaredAssetIds
      */
-    private function writeDocumentProperties(
-        ParsedPage $page,
-        Node $document,
+    private function reconcileProperties(
+        ParsedNode $parsed,
+        Node $node,
         ContentRepository $contentRepository,
         WorkspaceName $workspace,
         array $assets,
         array $declaredAssetIds,
-        \Closure $onMessage,
         ImportReport $report,
-        bool $dryRun,
     ): void {
-        if ($page->document->properties === []) {
+        $nodeType = self::requireNodeType($contentRepository, $node->nodeTypeName, $parsed->line);
+        $declared = $nodeType->getProperties();
+
+        if ($declared === []) {
             return;
         }
 
-        $nodeType = self::requireNodeType($contentRepository, $document->nodeTypeName, $page->document->line);
-        $values = $this->propertyValuesOf($page->document, $nodeType, $assets, $declaredAssetIds, $dryRun, $report);
-
-        if ($values === []) {
-            return;
-        }
-
-        if ($dryRun) {
-            $report->documentsUpdated++;
-
-            return;
-        }
+        $values = array_merge(
+            // Declared but unmentioned: cleared, so that removing a line from the file removes it
+            // from the node.
+            array_fill_keys(array_map('strval', array_keys($declared)), null),
+            $this->propertyValuesOf($parsed, $nodeType, $assets, $declaredAssetIds, false, $report),
+        );
 
         try {
             $contentRepository->handle(SetNodeProperties::create(
                 workspaceName: $workspace,
-                nodeAggregateId: $document->aggregateId,
-                originDimensionSpacePoint: $document->originDimensionSpacePoint,
+                nodeAggregateId: $node->aggregateId,
+                originDimensionSpacePoint: $node->originDimensionSpacePoint,
                 propertyValues: PropertyValuesToWrite::fromArray($values),
             ));
         } catch (\Exception $exception) {
             throw new \RuntimeException(
-                sprintf('Line %d: the properties of <%s> could not be set: %s', $page->document->line, $page->document->nodeTypeName, $exception->getMessage()),
+                sprintf('Line %d: the properties of <%s> could not be set: %s', $parsed->line, $parsed->nodeTypeName, $exception->getMessage()),
                 1787097684,
                 $exception
             );
         }
 
-        $report->documentsUpdated++;
-        $onMessage(sprintf('Set %d propert%s on %s.', count($values), count($values) === 1 ? 'y' : 'ies', $document->nodeTypeName->value));
+        $report->nodesReconciled++;
     }
 
     /**

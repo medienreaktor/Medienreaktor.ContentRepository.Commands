@@ -14,7 +14,7 @@ final class ImportReport
     public int $nodesRemoved = 0;
     public int $nodesCreated = 0;
     public int $pagesVisited = 0;
-    public int $documentsUpdated = 0;
+    public int $nodesReconciled = 0;
 
     /**
      * Things the file asked for that were skipped rather than done.

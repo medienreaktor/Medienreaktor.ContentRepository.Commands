@@ -223,12 +223,24 @@ Values are converted to the type the node type declares, so `showDash="true"` ar
 
 #### What the import does at each level
 
-The file is the desired state, and the level says what making it true means:
+**The file is the whole truth about what it describes.** Running the same file on two instances leaves them with the same tree, whatever state each was in beforehand. That is the guarantee, and everything below follows from it:
 
-- **A document named by a page path is matched, never created** — but the properties the file puts on it *are* written. In Neos 9 the site node is itself a document — the homepage — and `site:create` made it, so recreating it would take the site with it. Writing to it is how the site node's own settings get seeded: a title, a logo, favicons. The import checks that the node type matches what the file says, so a file written for another page fails before anything is removed.
-- **Content is rebuilt.** The children of every container the file describes are removed and written again in document order. A seed that appended would double its content on the second run, and one that merged would need identity the file does not carry. **So an editor's changes under a seeded collection are lost** — which is the trade a seed makes, and the reason not to point this at a site being worked on.
+- **Content is rebuilt.** The children of every container the file describes are removed and written again in document order. A seed that appended would double its content on the second run, and one that merged would need identity the file does not carry.
+- **A collection the file says nothing about is emptied.** A page element with no children does not mean "leave the content alone", it means "this page has no content". Otherwise what an import produced would depend on what was there first.
+- **A matched node's properties are brought to exactly what the file gives them.** Drop a property from the XML and it is unset on the next import, rather than quietly keeping its old value.
+- **A document named by a page path is matched, never created.** In Neos 9 the site node is itself a document — the homepage — and `site:create` made it, so recreating it would take the site with it. Its properties are still written, which is how a site's own settings get seeded: a title, a logo, favicons. The import checks that the node type matches what the file says, so a file written for another page fails before anything is removed.
 
-Tethered nodes are never removed, because the node type says they are always there. Their content is rebuilt when the file describes it.
+**So an editor's changes under a seeded page are lost** — which is the trade a seed makes, and the reason not to point this at a site being worked on.
+
+Tethered nodes themselves are never removed, because the node type says they are always there. Their *content* is reconciled like anything else.
+
+#### One asymmetry, stated plainly
+
+A node the import **creates** starts from its node type's defaults, because that is what the Content Repository does for a new node. A node the import only **matches** starts from nothing: the file's properties are written and every other declared property is unset.
+
+Writing the node type's defaults for a matched node would close that gap, and it is deliberately not done — it makes the seed hostage to every default being internally consistent, and they are not. `Medienreaktor.Site` currently declares `seo.organization.sameAs` as `type: string` with `defaultValue: [ ]`, which the Content Repository rightly refuses to write. A seed should not fail over a default it was never asked to set.
+
+Either way the outcome is determined by the file and not by what came before, which is what the guarantee requires.
 
 #### Where content goes is derived from the node type
 
