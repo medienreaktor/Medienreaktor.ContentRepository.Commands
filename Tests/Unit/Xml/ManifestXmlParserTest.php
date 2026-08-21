@@ -4,16 +4,16 @@ declare(strict_types=1);
 
 namespace Medienreaktor\ContentRepository\Commands\Tests\Unit\Xml;
 
-use Medienreaktor\ContentRepository\Commands\Xml\SeedXmlParser;
+use Medienreaktor\ContentRepository\Commands\Xml\ManifestXmlParser;
 use PHPUnit\Framework\TestCase;
 
-final class SeedXmlParserTest extends TestCase
+final class ManifestXmlParserTest extends TestCase
 {
-    private SeedXmlParser $parser;
+    private ManifestXmlParser $parser;
 
     protected function setUp(): void
     {
-        $this->parser = new SeedXmlParser();
+        $this->parser = new ManifestXmlParser();
     }
 
     public function testASiteIsReadWithItsPagesAndManifest(): void

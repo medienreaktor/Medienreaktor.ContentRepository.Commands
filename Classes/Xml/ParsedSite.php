@@ -7,7 +7,7 @@ namespace Medienreaktor\ContentRepository\Commands\Xml;
 /**
  * A whole seed file: which site and dimension it describes, the files it needs, and its pages.
  *
- * @see SeedXmlParser for the format
+ * @see ManifestXmlParser for the format
  */
 final readonly class ParsedSite
 {

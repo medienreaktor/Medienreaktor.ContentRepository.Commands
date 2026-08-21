@@ -4,11 +4,11 @@ declare(strict_types=1);
 
 namespace Medienreaktor\ContentRepository\Commands\Command;
 
-use Medienreaktor\ContentRepository\Commands\Import\XmlSeedImporter;
+use Medienreaktor\ContentRepository\Commands\Import\XmlManifestImporter;
 use Medienreaktor\ContentRepository\Commands\Input\PropertyValuesParser;
 use Medienreaktor\ContentRepository\Commands\Input\VariantSelectionStrategyParser;
 use Medienreaktor\ContentRepository\Commands\Media\AssetImporter;
-use Medienreaktor\ContentRepository\Commands\Xml\SeedXmlParser;
+use Medienreaktor\ContentRepository\Commands\Xml\ManifestXmlParser;
 use Neos\ContentRepository\Core\DimensionSpace\DimensionSpacePoint;
 use Neos\ContentRepository\Core\DimensionSpace\OriginDimensionSpacePoint;
 use Neos\ContentRepository\Core\Feature\NodeCreation\Command\CreateNodeAggregateWithNode;
@@ -77,10 +77,10 @@ final class CrCommandController extends CommandController
     protected AssetImporter $assetImporter;
 
     #[Flow\Inject]
-    protected SeedXmlParser $seedXmlParser;
+    protected ManifestXmlParser $manifestXmlParser;
 
     #[Flow\Inject]
-    protected XmlSeedImporter $xmlSeedImporter;
+    protected XmlManifestImporter $xmlManifestImporter;
 
     /**
      * Create node aggregate
@@ -250,8 +250,8 @@ final class CrCommandController extends CommandController
      *
      *     ./flow cr:importxml --file seed/LandingPage.xml
      *
-     * See {@see \Medienreaktor\ContentRepository\Commands\Xml\SeedXmlParser} for the format and
-     * {@see \Medienreaktor\ContentRepository\Commands\Import\XmlSeedImporter} for what the import
+     * See {@see \Medienreaktor\ContentRepository\Commands\Xml\ManifestXmlParser} for the format and
+     * {@see \Medienreaktor\ContentRepository\Commands\Import\XmlManifestImporter} for what the import
      * does at each level. **The file is the whole truth about what it describes.** Running it on two
      * instances leaves them with the same tree whatever state they were in: content is rebuilt, a
      * collection the file says nothing about is emptied, and a matched node's properties are brought
@@ -283,7 +283,7 @@ final class CrCommandController extends CommandController
     public function importXmlCommand(string $file, string $workspaceName = 'live', bool $dryRun = false): void
     {
         try {
-            $site = $this->seedXmlParser->parseFile($file);
+            $site = $this->manifestXmlParser->parseFile($file);
 
             $this->outputMessage(
                 '<success>%s: site "%s", content repository "%s", dimension %s, %d page(s).</success>',
@@ -296,7 +296,7 @@ final class CrCommandController extends CommandController
                 ]
             );
 
-            $report = $this->xmlSeedImporter->import(
+            $report = $this->xmlManifestImporter->import(
                 $site,
                 $workspaceName,
                 // A relative href in the manifest is relative to the file that wrote it, not to

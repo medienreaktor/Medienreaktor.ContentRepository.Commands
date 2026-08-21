@@ -60,7 +60,7 @@ use Neos\Media\Domain\Model\AssetInterface;
  * element whose two collections make a guess a coin toss.
  */
 #[Flow\Scope('singleton')]
-final class XmlSeedImporter
+final class XmlManifestImporter
 {
     /**
      * The node type every content collection is one of, and the root the site nodes sit under.

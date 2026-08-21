@@ -49,7 +49,7 @@ use Neos\Flow\Annotations as Flow;
  * unambiguous, which is worth failing on without a database.
  */
 #[Flow\Scope('singleton')]
-final class SeedXmlParser
+final class ManifestXmlParser
 {
     public const string SEED_NAMESPACE = 'https://medienreaktor.de/ns/neos-seed/1.0';
     public const string PROPERTY_NAMESPACE = 'https://medienreaktor.de/ns/neos-seed/1.0/property';
