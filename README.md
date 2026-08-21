@@ -201,73 +201,64 @@ The file describes the tree it wants to exist, with node types as element names:
 </crm:manifest>
 ```
 
-`cr:exportxsd` writes schemas for this, so an IDE validates it and completes node types, properties and select box values as you type. See [Export XML schemas](#export-xml-schemas).
+`cr:importxml` reads the file and nothing else. It does not validate against a schema and runs with none present, assuming only that the file is well-formed and unambiguous. For schemas an IDE can check it against, see [Export XML schemas](#export-xml-schemas).
 
-#### One `<crm:assets>`, one `<crm:site>`, both optional
+#### Structure
 
-Assets sit beside the site rather than inside it, because the Neos media library is global — an asset is not owned by a site. So a manifest carrying only assets is a legitimate thing to write: it seeds the media library and no content.
+| Element        | Occurs | Holds                                                        |
+| -------------- | ------ | ------------------------------------------------------------ |
+| `crm:manifest` | root   | one `crm:assets`, one `crm:site`, both optional               |
+| `crm:assets`   | 0..1   | `crm:asset`                                                  |
+| `crm:site`     | 0..1   | one or more `crm:page`; attributes `name` (required), `contentRepository`, `dimension` |
+| `crm:page`     | 1..n   | exactly one document element; attribute `path` (required)      |
 
-One site, because the importer handles one. Several would mean resolving a content repository and a dimension per site, which nothing needs yet.
+Assets are global to the file rather than owned by the site, so a manifest may carry assets and no site: it seeds the media library and no content. A manifest with neither is an error.
 
 #### The element name is the node type name
 
 A QName holds at most one colon and a node type name holds exactly one, so the package key becomes the namespace prefix and the rest the local name. Dots are legal in an NCName, so `Acme.Site:Content.Grid.Cell` survives intact and the element reads as the node type does in `NodeTypes.yaml`.
 
-**The namespace URI *is* the package key.** XML treats a prefix as arbitrary and reassignable — a formatter may rewrite `Acme.Site:` to `ns0:` and mean the same document — so the identity lives in the URI, and the shortest URI that carries a package key is the package key itself. Writing the prefix to match is a convention for the reader, not a requirement.
-
-Relative URI references as namespace names are deprecated by Namespaces in XML 1.0 Appendix A. In practice a namespace name is compared as an opaque string, and libxml, Xerces and IntelliJ all leave it alone rather than resolving it against the document.
+**The namespace URI is the package key.** The prefix is arbitrary and reassignable; `xmlns:ns0="Acme.Site"` with `<ns0:Content.Hero>` is the same document. Writing the prefix to match the package key is a convention.
 
 #### A property is an attribute or an unqualified element
 
-**Unqualified means a property; a namespace means a node type.** That is the whole distinction, and it needs no lookup — which is what keeps the parser able to reject a malformed file without a database.
-
-Both forms end up in the same place. An attribute suits a short scalar; an element holds markup literally, which an attribute can only do escaped past legibility:
+**Unqualified means a property; a namespace means a node type.** Both forms of a property end up in the same place:
 
 ```xml
+<Acme.Site:Content.Heading title="Plain text"/>
+
 <Acme.Site:Content.Heading>
-  <title><h2>Example <span class="highlight">headline.</span></h2></title>
+  <title><h2>Markup <span class="highlight">as written.</span></h2></title>
 </Acme.Site:Content.Heading>
 ```
 
-Setting the same property both ways is an error rather than a precedence rule, because a silent winner is how an edit gets ignored. Leading and trailing whitespace around an element's content is indentation and dropped; whitespace inside it is content and kept.
-
-Properties are unqualified so that a schema can validate them. XSD can only declare a local element in its own target namespace or in none at all — never in a foreign one — so a property in its own namespace would have to be declared globally, and would then be permitted on every node type. Unqualified, each node type declares exactly its own.
-
-Values are converted to the type the node type declares, so `showDash="true"` arrives as a boolean and `width="7"` as an integer if that is how they are declared. A value that does not fit is reported with the property name rather than cast: `(bool) "false"` is `true`, and a dash nobody asked for takes an afternoon to find.
+- Setting the same property both ways is an error.
+- Leading and trailing whitespace around an element's content is dropped; whitespace inside it is kept.
+- Values are converted to the type the node type declares, so `showDash="true"` arrives as a boolean and `width="7"` as an integer. A value that does not fit is reported with the property name rather than cast.
+- Text directly inside a node element is an error.
 
 #### What the import does at each level
 
-**The file is the whole truth about what it describes.** Running the same file on two instances leaves them with the same tree, whatever state each was in beforehand. That is the guarantee, and everything below follows from it:
+**The file is the whole truth about what it describes.** Running the same file on two instances leaves them with the same tree, whatever state each was in beforehand.
 
-- **Content is rebuilt.** The children of every container the file describes are removed and written again in document order. A seed that appended would double its content on the second run, and one that merged would need identity the file does not carry.
-- **A collection the file says nothing about is emptied.** A page element with no children does not mean "leave the content alone", it means "this page has no content". Otherwise what an import produced would depend on what was there first.
-- **A matched node's properties are brought to exactly what the file gives them.** Drop a property from the XML and it is unset on the next import, rather than quietly keeping its old value.
-- **A document named by a page path is matched, never created.** In Neos 9 the site node is itself a document — the homepage — and `site:create` made it, so recreating it would take the site with it. Its properties are still written, which is how a site's own settings get seeded: a title, a logo, favicons. The import checks that the node type matches what the file says, so a file written for another page fails before anything is removed.
+- **Content is rebuilt.** The children of every container the file describes are removed and written again in document order.
+- **A collection the file says nothing about is emptied.**
+- **A matched node's properties are brought to exactly what the file gives them.** Drop a property from the XML and it is unset on the next import.
+- **A document named by a page path is matched, never created.** Its properties are still written, which is how a site's own settings get seeded. The import fails if the node type does not match what the file says, before anything is removed.
+- **Tethered nodes are never removed.** Their content is reconciled like anything else.
 
-**So an editor's changes under a seeded page are lost** — which is the trade a seed makes, and the reason not to point this at a site being worked on.
+**An editor's changes under a seeded page are lost.** Do not point this at a site being worked on.
 
-Tethered nodes themselves are never removed, because the node type says they are always there. Their *content* is reconciled like anything else.
-
-#### One asymmetry, stated plainly
-
-A node the import **creates** starts from its node type's defaults, because that is what the Content Repository does for a new node. A node the import only **matches** starts from nothing: the file's properties are written and every other declared property is unset.
-
-Writing the node type's defaults for a matched node would close that gap, and it is deliberately not done — it makes the seed hostage to every default being internally consistent, and they are not. `Medienreaktor.Site` currently declares `seo.organization.sameAs` as `type: string` with `defaultValue: [ ]`, which the Content Repository rightly refuses to write. A seed should not fail over a default it was never asked to set.
-
-Either way the outcome is determined by the file and not by what came before, which is what the guarantee requires.
+One asymmetry: a node the import **creates** starts from its node type's defaults; a node it only **matches** starts from nothing, so the file's properties are written and every other declared property is unset. Either way the outcome follows from the file rather than from what came before.
 
 #### Where content goes is derived from the node type
 
-`main` is not a Neos fact: core declares no tethered node by that name, and each site package repeats the convention for itself. So rather than assuming it, the import asks the node type. For a node whose children are content:
+For a node whose children are content:
 
 1. the node type **is** a content collection — children go directly into it;
 2. it has **exactly one** tethered content collection — children go there;
 3. it has **several** — the file has to say which, with `crm:name`;
 4. it has **none** — children go directly into it.
-
-That covers `main` on every document type without naming it, and `content` on an element that has one. Case 3 is the one worth having: an element with `column0` and `column1` would otherwise take a guess, and content silently landing in the first column looks like a rendering bug.
-
-Where a name is needed, or wanted for clarity, `crm:name` gives it:
 
 ```xml
 <Acme.Site:Content.Columns.Two>
@@ -277,40 +268,37 @@ Where a name is needed, or wanted for clarity, `crm:name` gives it:
 </Acme.Site:Content.Columns.Two>
 ```
 
+`crm:name` addresses any tethered node, and is required only for case 3.
+
 #### A typo is an error, a reference is a warning
 
-A property the node type does not declare stops the import. It is a typo, and a seed file is a statement of the desired state — quietly dropping part of it would mean the page that comes out is not the page that was asked for:
+A property the node type does not declare stops the import:
 
 ```
 Error: Line 6: Acme.Site:Document.Page.Homepage has no property "titel".
 ```
 
-A property that is really a *reference* warns instead, and the rest of the import proceeds. Neos 9 keeps references separate from properties — a node type that spells one `type: references` has it normalised out of `properties` into the node type's `references` section, so `hasProperty()` is false for it — and this format cannot set references yet. That is the importer's limit rather than a mistake in the file, so it should not stop the other forty-odd nodes from being seeded:
+A property that is really a reference warns and is skipped; the rest of the import proceeds. This format cannot set references.
 
 ```
 Warning: Line 10: "footerItems" of Acme.Site:Document.Page.Homepage is a reference, not a property. This format cannot set references yet, so it was skipped.
-Created 0 node(s) in 1 page(s), updated 1 document(s), removed 0, assets: 0 imported, 1 reused. 1 warning(s).
 ```
 
-Warnings are printed as they are collected *and* counted in the summary: one buried under a hundred progress lines is a warning nobody reads, and one that only streams past is one nobody can count.
+Warnings are printed as they are collected and counted in the summary.
 
 #### Assets are declared once and referenced by id
 
-`<crm:assets>` lists the files the content needs; content refers to them by id (`image="hero"`). The ids are local to the file, which is what keeps it portable: an asset identifier differs in every database, an id does not. A relative `href` is resolved against the directory of the XML file, not the working directory of the command. Importing deduplicates on content, so re-running a seed does not fill the media library with copies.
+`<crm:assets>` lists the files the content needs; content refers to them by id (`image="hero"`). Ids are local to the file. A relative `href` resolves against the directory of the manifest, not the working directory of the command. Importing deduplicates on content, so re-running does not fill the media library with copies.
 
 #### `--dry-run`
 
-Unlike the other commands here this one takes a dry run, because it is a whole file rather than a single operation and there is a real question of whether it will read. A dry run walks the whole tree, resolving every node type and every property against it, checking that each asset reference is declared and each asset file is there, and writes nothing.
+A dry run walks the whole tree, resolving every node type and property against the node types, checking that each asset reference is declared and each asset file is there, and writes nothing. It reports no removal count.
 
-It can walk the whole tree because everything it checks follows from the node types rather than from any node existing — including which collection children belong in, so an element with two of them fails here rather than halfway through a real run.
-
-What it cannot check is the Content Repository's own constraints: whether this node type may sit under that one is answered by handling the command, and a dry run issues none. **It is a proofread, not a rehearsal** — a clean dry run does not promise a clean import.
-
-It reports no removal count, because it does not read the content that is already there.
+It cannot check the Content Repository's own constraints — whether this node type may sit under that one is answered by handling the command, and a dry run issues none. **It is a proofread, not a rehearsal.**
 
 ### Export XML schemas
 
-Use `cr:exportxsd` to write XML schemas for the installed node types, so that an IDE validates a manifest and completes node types, properties and select box values while it is being written.
+Use `cr:exportxsd` to write XML schemas for the installed node types, so that an IDE validates a manifest and completes node types, properties and select box values as it is written.
 
 | Argument            | Description                                                              | Example     |
 | ------------------- | ------------------------------------------------------------------------ | ----------- |
@@ -321,46 +309,41 @@ Use `cr:exportxsd` to write XML schemas for the installed node types, so that an
 flow cr:exportxsd --target Schema
 ```
 
-It writes one schema per package that declares at least one non-abstract node type, named after the package key, plus `all.xsd`. It does **not** write the manifest schema, and it neither reads nor rewrites a manifest — the schemas describe the installed package set rather than any one file, which is why the command takes a directory.
+| File                | Contents                                                                 |
+| ------------------- | ------------------------------------------------------------------------ |
+| `<PackageKey>.xsd`  | One per package declaring at least one non-abstract node type            |
+| `all.xsd`           | Imports the others plus the manifest schema; an entry point for `xmllint` |
 
-#### No configuration, in the file or in the IDE
+The command neither reads nor rewrites a manifest, and does not write the manifest schema — that ships with this package in `Schema/manifest.xsd` and stays there.
 
-A manifest needs no `xsi:schemaLocation`, and the project needs no external-resource mapping or XML catalog. An IDE resolves a namespace by scanning the project for a matching `targetNamespace`, and that scan reaches into the Composer install directory even when it is gitignored — so the manifest schema is found where it ships, in this package.
+#### Association
 
-The generated schemas themselves *do* carry a `schemaLocation` on every `xs:import`, and must. Namespace discovery covers what a document declares, but an IDE does not follow a location-less import — so without them a substitution group member declared in another package is never seen, and a manifest using one gets reported as invalid against a schema that in fact allows it. `xmllint` hid this, because `all.xsd` supplied the locations it needed.
+A manifest needs no `xsi:schemaLocation`, and the project needs no external-resource mapping or XML catalog. An IDE resolves a namespace by scanning the project for a matching `targetNamespace`, and that scan reaches into the Composer install directory even when it is gitignored.
 
-Nothing is ever copied, either. Two schemas sharing a `targetNamespace` resolve **silently and arbitrarily**: a manifest gets validated against whichever the IDE picked, with no warning that a second candidate existed. A copy is harmless while identical and wrong the moment it drifts — which is what happens when the package is updated without re-running the command. For the same reason the generated schemas go to one shared directory rather than beside each manifest.
+Every `xs:import` in a generated schema carries a `schemaLocation`, and must: an IDE does not follow a location-less import, and without one a substitution group member declared in another package is never seen.
 
-`all.xsd` exists for the command line, where nothing resolves a namespace on its own:
-
-```sh
-xmllint --noout --schema Schema/all.xsd manifest/Site.xml
-```
-
-An IDE has no use for it.
+No schema is ever copied. Two schemas sharing a `targetNamespace` resolve silently and arbitrarily, so there is exactly one of each in a project, and the generated schemas go to one shared directory rather than beside each manifest.
 
 #### What the schemas express
 
-Everything the node types do, and nothing on top:
+- **Which node types exist**, one element per non-abstract one, root node types excluded.
+- **Which properties each takes**, as attributes and as unqualified elements, typed.
+- **Which values a select box allows**, as an enumeration, in both forms.
+- **What may go inside what**, from the same rules the importer applies.
+- **Which document types a `crm:page` accepts**, through the `crm:document` substitution group.
+- **The content group**, `crm:content`, which every node type a plain content collection accepts enrols into. A container taking exactly that set references the head; one taking less lists what it takes.
 
-- **which node types exist**, one element per non-abstract one, the element reading as the node type does in `NodeTypes.yaml`;
-- **which properties each takes**, as attributes and as unqualified elements, typed — so `<showDash>maybe</showDash>` is an error;
-- **which values a select box allows**, as an enumeration, in both the attribute and the element form;
-- **what may go inside what**, from the same questions the importer asks, so a leaf content type correctly takes nothing and a grid takes what its constraints allow;
-- **which document types a `<crm:page>` accepts**, through a substitution group each generated schema enrols its own document types into;
-- **the content group**, `crm:content`, which every node type a plain content collection accepts enrols into. A container taking exactly that set references the head instead of listing every content type installed. One that takes anything less lists what it takes, because XSD cannot subtract a member from a substitution group — so a collection excluding a single type enumerates, which in practice is most of them.
+The node type name and each property's declared type are emitted as `xs:documentation`.
 
-The node type name and each property's declared type are emitted as `xs:documentation`, which an IDE shows on hover — and hands to an agent over its MCP.
+References are not emitted: a manifest naming one fails against the schema rather than validating and being skipped by the import.
 
-References are left out, because the format cannot set them: a manifest naming one should fail against the schema rather than validate and be silently skipped by the import.
+A node type with several content collections gets the union of their constraints, which is wider than the importer allows.
 
-Two places where the schema is deliberately not a mirror of Neos. Root node types are left out, since nothing can be created under a manifest that is not a child of something. And a node type with several content collections gets the union of their constraints, because a global element declaration carries one type and cannot vary by `crm:name` — a widening, so no valid manifest is ever rejected. Between the schema, the parser and the Content Repository the tree still comes out valid, which is all any of the three has to guarantee on its own.
+#### Regenerating
 
-#### Commit them, and re-run when the node types change
+The schemas follow the installed packages. Re-run the command after changing a `NodeTypes.yaml` or installing a package. Output is ordered, so a regenerated set diffs cleanly.
 
-The schemas follow the installed packages, so they go stale when a `NodeTypes.yaml` changes or a package is installed. Output is ordered — packages, node types and properties all sorted — so a regenerated set diffs cleanly and a stale one is visible in review.
-
-**An IDE may keep serving the previous schemas.** These are written from a CLI, and an IDE indexes what it is told about, so a manifest can go on being validated against the old schema until the change is picked up. The failure mode is confusing rather than loud: errors that look real, pointing at correct lines.
+**An IDE may keep serving the previous schemas.** These are written from a CLI, so a manifest can go on being validated against the old ones until the change is indexed.
 
 ### Passing property values
 

@@ -42,11 +42,6 @@ use Neos\Flow\Annotations as Flow;
  * attribute can only do escaped beyond legibility. Giving the same property both ways is an error
  * rather than a precedence rule, because a silent winner is how an edit gets ignored.
  *
- * That an unqualified element is a property is what lets a schema validate one. XSD can only declare
- * a local element in its own target namespace or in none at all — never in a foreign one — so a
- * property in its own namespace would have to be declared globally and would then be permitted on
- * every node type. Unqualified, each node type declares exactly its own.
- *
  * **Assets are global.** The media library is not partitioned by site, so <crm:assets> sits beside
  * <crm:site> rather than inside it, and a manifest may carry assets and no site at all.
  *

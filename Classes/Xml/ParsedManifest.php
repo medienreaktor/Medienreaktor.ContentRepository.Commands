@@ -11,9 +11,7 @@ namespace Medienreaktor\ContentRepository\Commands\Xml;
  * not owned by a site, and a manifest that only lists assets is a legitimate thing to write — it
  * seeds the media library and no content.
  *
- * $site is nullable for that reason, and singular because the importer handles one site. The schema
- * caps it at one to match; widening it would mean resolving a content repository and a dimension per
- * site, which nothing needs yet.
+ * $site is nullable for that reason, and singular because the importer handles one site.
  *
  * @see ManifestXmlParser for the format
  */
