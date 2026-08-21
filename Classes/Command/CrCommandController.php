@@ -8,6 +8,7 @@ use Medienreaktor\ContentRepository\Commands\Import\XmlManifestImporter;
 use Medienreaktor\ContentRepository\Commands\Input\PropertyValuesParser;
 use Medienreaktor\ContentRepository\Commands\Input\VariantSelectionStrategyParser;
 use Medienreaktor\ContentRepository\Commands\Media\AssetImporter;
+use Medienreaktor\ContentRepository\Commands\Schema\NodeTypeSchemaGenerator;
 use Medienreaktor\ContentRepository\Commands\Xml\ManifestXmlParser;
 use Neos\ContentRepository\Core\DimensionSpace\DimensionSpacePoint;
 use Neos\ContentRepository\Core\DimensionSpace\OriginDimensionSpacePoint;
@@ -27,6 +28,8 @@ use Neos\ContentRepository\Core\SharedModel\Workspace\WorkspaceName;
 use Neos\ContentRepositoryRegistry\ContentRepositoryRegistry;
 use Neos\Flow\Annotations as Flow;
 use Neos\Flow\Cli\CommandController;
+use Neos\Flow\Package\PackageManager;
+use Neos\Utility\Files;
 use Neos\Utility\TypeHandling;
 use Symfony\Component\Console\Output\ConsoleOutputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
@@ -81,6 +84,15 @@ final class CrCommandController extends CommandController
 
     #[Flow\Inject]
     protected XmlManifestImporter $xmlManifestImporter;
+
+    #[Flow\Inject]
+    protected NodeTypeSchemaGenerator $nodeTypeSchemaGenerator;
+
+    #[Flow\Inject]
+    protected PackageManager $packageManager;
+
+    /** This package's own key, for finding the manifest schema it ships. */
+    private const string PACKAGE_KEY = 'Medienreaktor.ContentRepository.Commands';
 
     /**
      * Create node aggregate
@@ -345,6 +357,69 @@ final class CrCommandController extends CommandController
                     $warnings,
                 ]
             );
+        } catch (\Exception $exception) {
+            $this->fail($exception);
+        }
+    }
+
+    /**
+     * Export XML schemas for the installed node types
+     *
+     * Writes one schema per package into --target, so that an IDE can validate and complete a
+     * manifest file against the node types actually installed:
+     *
+     *     ./flow cr:exportxsd --target Schema
+     *
+     * A manifest needs no xsi:schemaLocation and the project needs no IDE configuration. An IDE
+     * resolves a namespace by scanning the project for a matching targetNamespace, and that scan
+     * reaches into the Composer install directory even when it is gitignored — which is also why the
+     * manifest schema itself is not written here but read where it ships, in this package. Two
+     * schemas sharing a targetNamespace resolve silently and arbitrarily, so there is exactly one of
+     * each in a project and nothing is ever copied.
+     *
+     * The schemas describe the installed package set rather than any one file, which is why this
+     * takes a directory and not a manifest: it neither reads nor rewrites one.
+     *
+     * `all.xsd` is written alongside them for command line validation, where nothing resolves a
+     * namespace on its own. An IDE has no use for it.
+     *
+     * **An IDE may keep serving the previous schemas.** These are written from a CLI, and an IDE
+     * indexes what it is told about — so after a run that changes a schema, a manifest can go on
+     * being validated against the old one until the IDE picks the change up.
+     *
+     * @param string $target Directory to write the schemas to, relative to the current directory, created if it does not exist
+     * @param string $contentRepository Identifier of the Content Repository whose node types to read
+     */
+    public function exportXsdCommand(string $target = 'Schema', string $contentRepository = 'default'): void
+    {
+        try {
+            $cr = $this->contentRepositoryRegistry->get(ContentRepositoryId::fromString($contentRepository));
+
+            $manifestSchema = rtrim($this->packageManager->getPackage(self::PACKAGE_KEY)->getPackagePath(), '/')
+                . '/Resources/Private/Schema/manifest.xsd';
+
+            // Relative to the current directory, as --file is on cr:importxml.
+            $targetPath = rtrim($target, '/');
+            $targetPath = str_starts_with($targetPath, '/')
+                ? $targetPath
+                : rtrim((string)getcwd(), '/') . '/' . $targetPath;
+
+            Files::createDirectoryRecursively($targetPath);
+
+            $schemas = $this->nodeTypeSchemaGenerator->generate(
+                $cr->getNodeTypeManager(),
+                Files::getRelativePath($targetPath, $manifestSchema)
+            );
+
+            foreach ($schemas as $name => $schema) {
+                if (file_put_contents($targetPath . '/' . $name, $schema) === false) {
+                    throw new \RuntimeException(sprintf('The schema "%s" could not be written to %s.', $name, $targetPath), 1787097690);
+                }
+
+                $this->outputMessage('%s', [$name]);
+            }
+
+            $this->outputMessage('<success>Wrote %d schema(s) to %s.</success>', [count($schemas), $target]);
         } catch (\Exception $exception) {
             $this->fail($exception);
         }
