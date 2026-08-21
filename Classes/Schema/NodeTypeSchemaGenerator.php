@@ -115,7 +115,7 @@ final class NodeTypeSchemaGenerator
 
         foreach ($byPackage as $packageKey => $nodeTypes) {
             ksort($nodeTypes);
-            $files[$packageKey . '.xsd'] = $this->packageSchema($packageKey, $nodeTypes, $candidates, $contentGroup, $nodeTypeManager);
+            $files[$packageKey . '.xsd'] = $this->packageSchema($packageKey, $nodeTypes, $candidates, $contentGroup, $manifestSchemaLocation, $nodeTypeManager);
         }
 
         $files['all.xsd'] = $this->aggregateSchema(array_keys($byPackage), $manifestSchemaLocation);
@@ -127,12 +127,14 @@ final class NodeTypeSchemaGenerator
      * @param array<string,NodeType> $nodeTypes local name => node type, this package's own
      * @param array<string,NodeType> $candidates every usable node type, for the child lookups
      * @param array<string,true> $contentGroup what crm:content stands for
+     * @param string $manifestSchemaLocation relative path to the manifest schema this package ships
      */
     private function packageSchema(
         string $packageKey,
         array $nodeTypes,
         array $candidates,
         array $contentGroup,
+        string $manifestSchemaLocation,
         NodeTypeManager $nodeTypeManager,
     ): string {
         // Children are resolved first, because which other packages this schema has to declare a
@@ -184,13 +186,15 @@ final class NodeTypeSchemaGenerator
             $packageKey
         )));
 
-        // No schemaLocation on any import: an IDE resolves a namespace by scanning the project, which
-        // reaches into the Composer install directory. all.xsd carries the paths for the command line.
-        $schema->appendChild(self::import($document, ManifestXmlParser::MANIFEST_NAMESPACE));
+        // Every import carries a schemaLocation. Namespace *discovery* covers the document's own
+        // declarations, but an IDE does not follow a location-less xs:import — so without these a
+        // substitution group member declared in another package is never seen, and a manifest using
+        // one is reported as invalid against a schema that in fact allows it.
+        $schema->appendChild(self::import($document, ManifestXmlParser::MANIFEST_NAMESPACE, $manifestSchemaLocation));
 
         foreach (array_keys($referenced) as $importedPackageKey) {
             if ($importedPackageKey !== $packageKey) {
-                $schema->appendChild(self::import($document, (string)$importedPackageKey));
+                $schema->appendChild(self::import($document, (string)$importedPackageKey, $importedPackageKey . '.xsd'));
             }
         }
 

@@ -327,7 +327,9 @@ It writes one schema per package that declares at least one non-abstract node ty
 
 A manifest needs no `xsi:schemaLocation`, and the project needs no external-resource mapping or XML catalog. An IDE resolves a namespace by scanning the project for a matching `targetNamespace`, and that scan reaches into the Composer install directory even when it is gitignored — so the manifest schema is found where it ships, in this package.
 
-Which is also why nothing is ever copied. Two schemas sharing a `targetNamespace` resolve **silently and arbitrarily**: a manifest gets validated against whichever the IDE picked, with no warning that a second candidate existed. A copy is harmless while identical and wrong the moment it drifts — which is what happens when the package is updated without re-running the command. For the same reason the generated schemas go to one shared directory rather than beside each manifest.
+The generated schemas themselves *do* carry a `schemaLocation` on every `xs:import`, and must. Namespace discovery covers what a document declares, but an IDE does not follow a location-less import — so without them a substitution group member declared in another package is never seen, and a manifest using one gets reported as invalid against a schema that in fact allows it. `xmllint` hid this, because `all.xsd` supplied the locations it needed.
+
+Nothing is ever copied, either. Two schemas sharing a `targetNamespace` resolve **silently and arbitrarily**: a manifest gets validated against whichever the IDE picked, with no warning that a second candidate existed. A copy is harmless while identical and wrong the moment it drifts — which is what happens when the package is updated without re-running the command. For the same reason the generated schemas go to one shared directory rather than beside each manifest.
 
 `all.xsd` exists for the command line, where nothing resolves a namespace on its own:
 
