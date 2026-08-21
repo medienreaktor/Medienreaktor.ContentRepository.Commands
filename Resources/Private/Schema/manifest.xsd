@@ -1,0 +1,156 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The manifest format of Medienreaktor.ContentRepository.Commands, as read by cr:importxml.
+
+  This file is static and needs no generation. The node types a manifest may use live in generated
+  sibling schemas, one per package, written by the cr:exportxsd command into its target directory.
+  Those schemas enrol their own document types into the crm:document substitution group below, so
+  this file never has to know what is installed. It is also never copied: two schemas sharing a
+  targetNamespace resolve silently and arbitrarily, so there is exactly one of each in a project.
+
+  No xsi:schemaLocation is needed in a manifest file. An IDE resolves a namespace by scanning the
+  project for a matching targetNamespace, and that scan reaches into the Composer install directory
+  even when it is gitignored.
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:crm="https://medienreaktor.de/ns/contentrepository-commands/manifest"
+           targetNamespace="https://medienreaktor.de/ns/contentrepository-commands/manifest"
+           elementFormDefault="qualified">
+
+    <xs:annotation>
+        <xs:documentation>
+            A manifest describes the content tree it wants to exist, with node types as element
+            names. It is the desired state: content is rebuilt, and a collection the file says
+            nothing about is emptied.
+        </xs:documentation>
+    </xs:annotation>
+
+    <!--
+      Names a tethered node where a node type has more than one content collection and the target
+      would otherwise be a guess. Generated node type schemas reference this.
+    -->
+    <xs:attribute name="name" type="xs:NCName">
+        <xs:annotation>
+            <xs:documentation>The tethered node this element stands for.</xs:documentation>
+        </xs:annotation>
+    </xs:attribute>
+
+    <!--
+      Substitution group head for document node types.
+
+      abstract, so it never appears in a manifest itself; untyped, so its type is xs:anyType and any
+      member type is validly derived from it. A generated schema enrols a document type with
+      substitutionGroup="crm:document", which is what lets <crm:page> accept every installed
+      document type without this file importing anything.
+    -->
+    <xs:element name="document" abstract="true">
+        <xs:annotation>
+            <xs:documentation>Any document node type. Substituted by the installed ones.</xs:documentation>
+        </xs:annotation>
+    </xs:element>
+
+    <xs:element name="manifest">
+        <xs:annotation>
+            <xs:documentation>The root of a manifest: the assets it needs, and the site it fills.</xs:documentation>
+        </xs:annotation>
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element ref="crm:assets" minOccurs="0"/>
+                <xs:element ref="crm:site" minOccurs="0"/>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+
+    <!--
+      Assets sit beside the site rather than inside it, because the Neos media library is global. A
+      manifest carrying assets and no site is legitimate: it seeds the media library and no content.
+    -->
+    <xs:element name="assets">
+        <xs:annotation>
+            <xs:documentation>Files to have in the media library, under ids the content refers to.</xs:documentation>
+        </xs:annotation>
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element ref="crm:asset" minOccurs="0" maxOccurs="unbounded"/>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+
+    <xs:element name="asset">
+        <xs:complexType>
+            <xs:attribute name="id" type="xs:NCName" use="required">
+                <xs:annotation>
+                    <xs:documentation>
+                        Local to this file. Content refers to it by id rather than by an asset
+                        identifier, which differs in every database — that is what keeps a manifest
+                        portable.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="href" type="xs:string" use="required">
+                <xs:annotation>
+                    <xs:documentation>
+                        Path to the file, resolved against the directory of this manifest, or an
+                        http(s) URL.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="title" type="xs:string">
+                <xs:annotation>
+                    <xs:documentation>Title in the media browser. Defaults to the file name.</xs:documentation>
+                </xs:annotation>
+            </xs:attribute>
+        </xs:complexType>
+    </xs:element>
+
+    <!--
+      One site per manifest, because the importer handles one. Several would mean resolving a content
+      repository and a dimension per site; widen this when the importer widens, not before.
+    -->
+    <xs:element name="site">
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element ref="crm:page" maxOccurs="unbounded"/>
+            </xs:sequence>
+            <xs:attribute name="name" type="xs:string" use="required">
+                <xs:annotation>
+                    <xs:documentation>Name of the site node, as site:create made it.</xs:documentation>
+                </xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="contentRepository" type="xs:string">
+                <xs:annotation>
+                    <xs:documentation>Identifier of the content repository. Defaults to "default".</xs:documentation>
+                </xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="dimension" type="xs:string">
+                <xs:annotation>
+                    <xs:documentation>
+                        The dimension space point, written as name=value and comma-separated for more
+                        than one. Empty for a site without dimensions.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:attribute>
+        </xs:complexType>
+    </xs:element>
+
+    <xs:element name="page">
+        <xs:annotation>
+            <xs:documentation>
+                One document of the site. The document is matched rather than created — in Neos 9 the
+                site node is itself a document, and recreating it would take the site with it — but
+                the properties this file puts on it are written.
+            </xs:documentation>
+        </xs:annotation>
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element ref="crm:document"/>
+            </xs:sequence>
+            <xs:attribute name="path" type="xs:string" use="required">
+                <xs:annotation>
+                    <xs:documentation>Path relative to the site node; "/" is the site node itself.</xs:documentation>
+                </xs:annotation>
+            </xs:attribute>
+        </xs:complexType>
+    </xs:element>
+
+</xs:schema>
