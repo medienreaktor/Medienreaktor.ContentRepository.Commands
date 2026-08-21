@@ -7,15 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-08-21
+
 ### Fixed
 
 - `cr:exportxsd` no longer writes `elementFormDefault="unqualified"` on a generated schema. It is the
   XSD default, so stating it changed nothing and an IDE reported it as a redundant attribute value.
 
 ## [0.6.0] - 2026-08-21
-
-The seed XML format becomes the manifest format. Every existing file needs rewriting: the root
-element, both namespaces and the property syntax all move.
 
 ### Added
 
@@ -113,12 +112,3 @@ element, both namespaces and the property syntax all move.
 
 - `cr:createnodeaggregate` and `cr:setnodeproperties`, dispatching Content Repository commands from
   the CLI.
-
-[Unreleased]: https://github.com/medienreaktor/Medienreaktor.ContentRepository.Commands/compare/0.6.0...HEAD
-[0.6.0]: https://github.com/medienreaktor/Medienreaktor.ContentRepository.Commands/compare/0.5.1...0.6.0
-[0.5.1]: https://github.com/medienreaktor/Medienreaktor.ContentRepository.Commands/compare/0.5.0...0.5.1
-[0.5.0]: https://github.com/medienreaktor/Medienreaktor.ContentRepository.Commands/compare/0.4.0...0.5.0
-[0.4.0]: https://github.com/medienreaktor/Medienreaktor.ContentRepository.Commands/compare/0.3.0...0.4.0
-[0.3.0]: https://github.com/medienreaktor/Medienreaktor.ContentRepository.Commands/compare/0.2.0...0.3.0
-[0.2.0]: https://github.com/medienreaktor/Medienreaktor.ContentRepository.Commands/compare/0.1.0...0.2.0
-[0.1.0]: https://github.com/medienreaktor/Medienreaktor.ContentRepository.Commands/releases/tag/0.1.0
