@@ -47,6 +47,9 @@ final class NodeTypeSchemaGenerator
     private const string DOCUMENT_NODE_TYPE = 'Neos.Neos:Document';
     private const string CONTENT_COLLECTION_NODE_TYPE = 'Neos.Neos:ContentCollection';
 
+    /** The manifest schema's substitution group head for content node types. */
+    private const string CONTENT_GROUP_REFERENCE = 'crm:content';
+
     private const string XML_SCHEMA_NAMESPACE = 'http://www.w3.org/2001/XMLSchema';
     private const string XMLNS_NAMESPACE = 'http://www.w3.org/2000/xmlns/';
 
@@ -107,11 +110,12 @@ final class NodeTypeSchemaGenerator
 
         ksort($byPackage);
 
+        $contentGroup = self::contentGroupOf($candidates, $nodeTypeManager);
         $files = [];
 
         foreach ($byPackage as $packageKey => $nodeTypes) {
             ksort($nodeTypes);
-            $files[$packageKey . '.xsd'] = $this->packageSchema($packageKey, $nodeTypes, $candidates, $nodeTypeManager);
+            $files[$packageKey . '.xsd'] = $this->packageSchema($packageKey, $nodeTypes, $candidates, $contentGroup, $nodeTypeManager);
         }
 
         $files['all.xsd'] = $this->aggregateSchema(array_keys($byPackage), $manifestSchemaLocation);
@@ -122,19 +126,32 @@ final class NodeTypeSchemaGenerator
     /**
      * @param array<string,NodeType> $nodeTypes local name => node type, this package's own
      * @param array<string,NodeType> $candidates every usable node type, for the child lookups
+     * @param array<string,true> $contentGroup what crm:content stands for
      */
-    private function packageSchema(string $packageKey, array $nodeTypes, array $candidates, NodeTypeManager $nodeTypeManager): string
-    {
+    private function packageSchema(
+        string $packageKey,
+        array $nodeTypes,
+        array $candidates,
+        array $contentGroup,
+        NodeTypeManager $nodeTypeManager,
+    ): string {
         // Children are resolved first, because which other packages this schema has to declare a
         // prefix for and import follows from them.
         $children = [];
         $referenced = [$packageKey => true];
 
         foreach ($nodeTypes as $localName => $nodeType) {
-            $children[$localName] = $this->allowedChildrenOf($nodeType, $candidates, $nodeTypeManager);
+            $children[$localName] = self::childReferences(
+                $this->allowedChildrenOf($nodeType, $candidates, $nodeTypeManager),
+                $contentGroup
+            );
 
-            foreach ($children[$localName] as $childNodeTypeName) {
-                [$childPackageKey] = self::split($childNodeTypeName) ?? [''];
+            foreach ($children[$localName] as $reference) {
+                if ($reference === self::CONTENT_GROUP_REFERENCE) {
+                    continue;
+                }
+
+                [$childPackageKey] = self::split($reference) ?? [''];
                 $referenced[$childPackageKey] = true;
             }
         }
@@ -180,10 +197,74 @@ final class NodeTypeSchemaGenerator
         $schema->appendChild(self::propertyValueType($document));
 
         foreach ($nodeTypes as $localName => $nodeType) {
-            $schema->appendChild($this->element($document, $packageKey, $localName, $nodeType, $children[$localName]));
+            $schema->appendChild($this->element($document, $packageKey, $localName, $nodeType, $children[$localName], $contentGroup));
         }
 
         return (string)$document->saveXML();
+    }
+
+    /**
+     * What crm:content stands for: every node type a plain content collection accepts.
+     *
+     * Derived rather than declared, so it follows whatever the installed packages say a collection
+     * takes. Documents are not in it, because a collection's own constraints exclude them.
+     *
+     * @param array<string,NodeType> $candidates
+     * @return array<string,true>
+     */
+    private static function contentGroupOf(array $candidates, NodeTypeManager $nodeTypeManager): array
+    {
+        $collection = $nodeTypeManager->getNodeType(NodeTypeName::fromString(self::CONTENT_COLLECTION_NODE_TYPE));
+
+        if ($collection === null) {
+            return [];
+        }
+
+        $group = [];
+
+        foreach ($candidates as $name => $candidate) {
+            if ($collection->allowsChildNodeType($candidate)) {
+                $group[(string)$name] = true;
+            }
+        }
+
+        return $group;
+    }
+
+    /**
+     * The child references to emit, collapsing the content group into one where it applies.
+     *
+     * A container that accepts everything a collection accepts says so with crm:content instead of
+     * listing every content type installed — the same statement, some hundreds of lines shorter.
+     * Anything it accepts beyond the group is still listed, and nothing in the group is listed
+     * alongside the head: an element reachable both ways would make the content model ambiguous,
+     * which XSD rejects outright.
+     *
+     * @param array<int,string> $allowed
+     * @param array<string,true> $contentGroup
+     * @return array<int,string>
+     */
+    private static function childReferences(array $allowed, array $contentGroup): array
+    {
+        if ($contentGroup === []) {
+            return $allowed;
+        }
+
+        $remaining = [];
+
+        foreach ($allowed as $name) {
+            if (!isset($contentGroup[$name])) {
+                $remaining[] = $name;
+            }
+        }
+
+        // Only a container accepting the whole group can use the head; one accepting most of it has
+        // to list what it takes, since XSD cannot subtract a member from a substitution group.
+        if (count($allowed) - count($remaining) !== count($contentGroup)) {
+            return $allowed;
+        }
+
+        return [self::CONTENT_GROUP_REFERENCE, ...$remaining];
     }
 
     private static function import(\DOMDocument $document, string $namespace, ?string $schemaLocation = null): \DOMElement
@@ -225,6 +306,7 @@ final class NodeTypeSchemaGenerator
 
     /**
      * @param array<int,string> $children
+     * @param array<string,true> $contentGroup
      */
     private function element(
         \DOMDocument $document,
@@ -232,14 +314,19 @@ final class NodeTypeSchemaGenerator
         string $localName,
         NodeType $nodeType,
         array $children,
+        array $contentGroup,
     ): \DOMElement {
         $element = $document->createElementNS(self::XML_SCHEMA_NAMESPACE, 'xs:element');
         $element->setAttribute('name', $localName);
 
-        // A document type enrols itself into the manifest schema's substitution group, which is what
-        // lets <crm:page> accept it without the manifest schema knowing it exists.
+        // A node type enrols itself into one of the manifest schema's substitution groups, which is
+        // what lets <crm:page> accept a document, and a container accept the content group, without
+        // the manifest schema knowing either exists. XSD 1.0 allows one group per element, and the
+        // two never overlap: a collection's constraints exclude documents.
         if ($nodeType->isOfType(self::DOCUMENT_NODE_TYPE)) {
             $element->setAttribute('substitutionGroup', 'crm:document');
+        } elseif (isset($contentGroup[$nodeType->name->value])) {
+            $element->setAttribute('substitutionGroup', self::CONTENT_GROUP_REFERENCE);
         }
 
         $element->appendChild(self::annotation($document, self::describe($nodeType)));

@@ -396,7 +396,7 @@ final class CrCommandController extends CommandController
             $cr = $this->contentRepositoryRegistry->get(ContentRepositoryId::fromString($contentRepository));
 
             $manifestSchema = rtrim($this->packageManager->getPackage(self::PACKAGE_KEY)->getPackagePath(), '/')
-                . '/Resources/Private/Schema/manifest.xsd';
+                . '/Schema/manifest.xsd';
 
             // Relative to the current directory, as --file is on cr:importxml.
             $targetPath = rtrim($target, '/');

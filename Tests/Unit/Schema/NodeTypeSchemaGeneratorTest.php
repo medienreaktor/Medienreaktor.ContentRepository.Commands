@@ -40,7 +40,7 @@ final class NodeTypeSchemaGeneratorTest extends TestCase
             file_put_contents($this->directory . '/' . $name, $schema);
         }
 
-        copy(dirname(__DIR__, 3) . '/Resources/Private/Schema/manifest.xsd', $this->directory . '/manifest.xsd');
+        copy(dirname(__DIR__, 3) . '/Schema/manifest.xsd', $this->directory . '/manifest.xsd');
     }
 
     protected function tearDown(): void
@@ -185,6 +185,70 @@ final class NodeTypeSchemaGeneratorTest extends TestCase
         );
     }
 
+    /**
+     * A container accepting everything a collection accepts says so with the substitution group
+     * head, rather than listing every content type installed.
+     */
+    public function testAContainerThatTakesEverythingReferencesTheContentGroup(): void
+    {
+        $homepage = self::elementOf($this->schemas['Acme.Site.xsd'], 'Document.Page.Homepage');
+
+        self::assertStringContainsString('ref="crm:content"', $homepage);
+        self::assertStringNotContainsString('ref="Acme.Site:Content.Hero"', $homepage);
+
+        // Every member of the group enrols itself, which is what makes the reference mean anything.
+        self::assertStringContainsString(
+            'substitutionGroup="crm:content"',
+            self::elementOf($this->schemas['Acme.Site.xsd'], 'Content.Hero')
+        );
+    }
+
+    /**
+     * XSD cannot subtract a member from a substitution group, so a container that takes almost the
+     * whole group has to list what it takes — and must still reject what it does not.
+     */
+    public function testAContainerThatTakesAlmostEverythingListsItInstead(): void
+    {
+        $wrapper = self::elementOf($this->schemas['Acme.Site.xsd'], 'Content.Wrapper');
+
+        self::assertStringNotContainsString('ref="crm:content"', $wrapper);
+        self::assertStringContainsString('ref="Acme.Site:Content.Hero"', $wrapper);
+
+        self::assertSame([], $this->validate($this->manifest(
+            '<Acme.Site:Content.Wrapper><Acme.Site:Content.Hero/></Acme.Site:Content.Wrapper>'
+        ))['documentErrors']);
+
+        self::assertNotSame([], $this->validate($this->manifest(
+            '<Acme.Site:Content.Wrapper><Acme.Site:Content.Teaser/></Acme.Site:Content.Wrapper>'
+        ))['documentErrors']);
+    }
+
+    /**
+     * A document is never a content child, which is what lets each element carry one substitution
+     * group in XSD 1.0.
+     */
+    public function testADocumentTypeIsNotInTheContentGroup(): void
+    {
+        self::assertStringNotContainsString(
+            'substitutionGroup="crm:content"',
+            self::elementOf($this->schemas['Acme.Site.xsd'], 'Document.Page.Homepage')
+        );
+    }
+
+    /**
+     * One global element declaration, anchored on its indentation — a property is also an
+     * <xs:element name="…">, just a nested one.
+     */
+    private static function elementOf(string $schema, string $localName): string
+    {
+        $start = strpos($schema, sprintf("\n  <xs:element name=\"%s\"", $localName));
+        self::assertNotFalse($start, sprintf('No global element "%s" in the schema.', $localName));
+
+        $end = strpos($schema, "\n  <xs:element name=\"", $start + 1);
+
+        return $end === false ? substr($schema, $start) : substr($schema, $start, $end - $start);
+    }
+
     public function testAReferenceIsNotEmittedBecauseTheFormatCannotSetOne(): void
     {
         self::assertStringNotContainsString('footerItems', $this->schemas['Acme.Site.xsd']);
@@ -294,6 +358,15 @@ final class NodeTypeSchemaGeneratorTest extends TestCase
             'Acme.Site:Content.Teaser' => [
                 'superTypes' => ['Neos.Neos:Content' => true],
                 'properties' => ['number' => ['type' => 'string']],
+            ],
+            // Takes the content group minus one type, which is the case the substitution group
+            // cannot express.
+            'Acme.Site:Content.Wrapper' => [
+                'superTypes' => ['Neos.Neos:Content' => true],
+                'childNodes' => ['content' => [
+                    'type' => 'Neos.Neos:ContentCollection',
+                    'constraints' => ['nodeTypes' => ['Acme.Site:Content.Teaser' => false]],
+                ]],
             ],
             'Acme.Site:Content.Grid' => [
                 'superTypes' => ['Neos.Neos:Content' => true, 'Neos.Neos:ContentCollection' => true],

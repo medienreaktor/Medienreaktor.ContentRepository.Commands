@@ -345,7 +345,8 @@ Everything the node types do, and nothing on top:
 - **which properties each takes**, as attributes and as unqualified elements, typed — so `<showDash>maybe</showDash>` is an error;
 - **which values a select box allows**, as an enumeration, in both the attribute and the element form;
 - **what may go inside what**, from the same questions the importer asks, so a leaf content type correctly takes nothing and a grid takes what its constraints allow;
-- **which document types a `<crm:page>` accepts**, through a substitution group each generated schema enrols its own document types into.
+- **which document types a `<crm:page>` accepts**, through a substitution group each generated schema enrols its own document types into;
+- **the content group**, `crm:content`, which every node type a plain content collection accepts enrols into. A container taking exactly that set references the head instead of listing every content type installed. One that takes anything less lists what it takes, because XSD cannot subtract a member from a substitution group — so a collection excluding a single type enumerates, which in practice is most of them.
 
 The node type name and each property's declared type are emitted as `xs:documentation`, which an IDE shows on hover — and hands to an agent over its MCP.
 

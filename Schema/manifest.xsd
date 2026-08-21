@@ -49,6 +49,22 @@
         </xs:annotation>
     </xs:element>
 
+    <!--
+      Substitution group head for content node types: everything a plain
+      Neos.Neos:ContentCollection accepts.
+
+      Most containers accept exactly that set, so referencing this head is the same statement as
+      listing every content type installed — and one reference rather than some hundreds of them.
+      A container accepting anything else, a grid taking only cells say, lists what it takes
+      instead; the two are never mixed for one element, since an element reachable both ways
+      would make the content model ambiguous.
+    -->
+    <xs:element name="content" abstract="true">
+        <xs:annotation>
+            <xs:documentation>Any content node type a content collection accepts.</xs:documentation>
+        </xs:annotation>
+    </xs:element>
+
     <xs:element name="manifest">
         <xs:annotation>
             <xs:documentation>The root of a manifest: the assets it needs, and the site it fills.</xs:documentation>
