@@ -95,11 +95,11 @@ final class SeedXmlParserTest extends TestCase
     public function testMarkupInsideAPropertyElementIsKept(): void
     {
         $site = $this->parser->parse($this->seed(
-            content: '<Acme.Site:Content.Hero><prop:title>We power <span class="hl">freedom.</span></prop:title></Acme.Site:Content.Hero>'
+            content: '<Acme.Site:Content.Hero><prop:title>Example <span class="hl">headline.</span></prop:title></Acme.Site:Content.Hero>'
         ));
 
         self::assertSame(
-            'We power <span class="hl">freedom.</span>',
+            'Example <span class="hl">headline.</span>',
             $site->pages[0]->document->children[0]->properties['title']
         );
     }

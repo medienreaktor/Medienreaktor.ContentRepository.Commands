@@ -189,7 +189,7 @@ The file describes the tree it wants to exist, with node types as element names:
   <seed:page path="/">
     <Acme.Site:Document.Page.Homepage title="Acme" logo="logo">
       <Acme.Site:Content.Hero image="hero" alternativeText="Rectangle 85">
-        <prop:title>We power <span class="highlight">freedom.</span></prop:title>
+        <prop:title>Example <span class="highlight">headline.</span></prop:title>
       </Acme.Site:Content.Hero>
       <Acme.Site:Content.Grid columns="2" layout="6-6">
         <Acme.Site:Content.Grid.Cell>
@@ -213,7 +213,7 @@ Both end up in the same place. An attribute suits a short scalar; a `prop:` elem
 
 ```xml
 <Acme.Site:Content.Heading>
-  <prop:title><h2>We power <span class="highlight">freedom.</span></h2></prop:title>
+  <prop:title><h2>Example <span class="highlight">headline.</span></h2></prop:title>
 </Acme.Site:Content.Heading>
 ```
 

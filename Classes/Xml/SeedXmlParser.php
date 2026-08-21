@@ -21,7 +21,7 @@ use Neos\Flow\Annotations as Flow;
  *       <seed:page path="/">
  *         <Medienreaktor.Site:Document.Page.Homepage>
  *           <Medienreaktor.Site:Content.Hero image="hero" alternativeText="Rectangle 85">
- *             <prop:title>We power <span class="highlight">freedom.</span></prop:title>
+ *             <prop:title>Example <span class="highlight">headline.</span></prop:title>
  *           </Medienreaktor.Site:Content.Hero>
  *         </Medienreaktor.Site:Document.Page.Homepage>
  *       </seed:page>
