@@ -243,12 +243,12 @@ final class CrCommandController extends CommandController
     }
 
     /**
-     * Import a content tree from a seed XML file
+     * Import a content tree from a manifest XML file
      *
      * The file describes the tree it wants to exist, with node types as element names, and the
      * import makes the graph match it:
      *
-     *     ./flow cr:importxml --file seed/LandingPage.xml
+     *     ./flow cr:importxml --file manifest/Site.xml
      *
      * See {@see \Medienreaktor\ContentRepository\Commands\Xml\ManifestXmlParser} for the format and
      * {@see \Medienreaktor\ContentRepository\Commands\Import\XmlManifestImporter} for what the import
@@ -257,7 +257,7 @@ final class CrCommandController extends CommandController
      * collection the file says nothing about is emptied, and a matched node's properties are brought
      * to exactly what the file gives them — so dropping a property from the XML unsets it rather
      * than leaving the old value behind. **An editor's changes under a seeded page are therefore
-     * lost**, which is the trade a seed makes and the reason not to point this at a site being
+     * lost**, which is the trade a manifest makes and the reason not to point this at a site being
      * worked on.
      *
      * A document named by a page path is matched rather than created, since in Neos 9 the site node
@@ -271,35 +271,43 @@ final class CrCommandController extends CommandController
      * Unlike the other commands here this one takes a --dry-run, because it is a whole file rather
      * than a single operation and there is a real question of whether it will read. A dry run walks
      * the whole tree, resolving every node type and property and checking that each asset reference
-     * is declared and each manifest file is there, and writes nothing. What it cannot check is the
+     * is declared and each asset file is there, and writes nothing. What it cannot check is the
      * Content Repository's own constraints — whether this node type may sit under that one is
      * answered by handling the command, and a dry run issues none. It is a proofread, not a
      * rehearsal.
      *
-     * @param string $file Path to the seed XML file
+     * @param string $file Path to the manifest XML file
      * @param string $workspaceName The workspace to write to
      * @param bool $dryRun Report what the import would do, and write nothing
      */
     public function importXmlCommand(string $file, string $workspaceName = 'live', bool $dryRun = false): void
     {
         try {
-            $site = $this->manifestXmlParser->parseFile($file);
+            $manifest = $this->manifestXmlParser->parseFile($file);
+            $site = $manifest->site;
 
-            $this->outputMessage(
-                '<success>%s: site "%s", content repository "%s", dimension %s, %d page(s).</success>',
-                [
-                    $dryRun ? 'Would import' : 'Importing',
-                    $site->siteNodeName,
-                    $site->contentRepositoryId,
-                    $site->dimensionSpacePoint === [] ? '(none)' : json_encode($site->dimensionSpacePoint, JSON_THROW_ON_ERROR),
-                    count($site->pages),
-                ]
-            );
+            if ($site === null) {
+                $this->outputMessage(
+                    '<success>%s: %d asset(s), no site.</success>',
+                    [$dryRun ? 'Would import' : 'Importing', count($manifest->assets)]
+                );
+            } else {
+                $this->outputMessage(
+                    '<success>%s: site "%s", content repository "%s", dimension %s, %d page(s).</success>',
+                    [
+                        $dryRun ? 'Would import' : 'Importing',
+                        $site->siteNodeName,
+                        $site->contentRepositoryId,
+                        $site->dimensionSpacePoint === [] ? '(none)' : json_encode($site->dimensionSpacePoint, JSON_THROW_ON_ERROR),
+                        count($site->pages),
+                    ]
+                );
+            }
 
             $report = $this->xmlManifestImporter->import(
-                $site,
+                $manifest,
                 $workspaceName,
-                // A relative href in the manifest is relative to the file that wrote it, not to
+                // A relative href is relative to the file that declared it, not to
                 // wherever the command happens to be run from.
                 dirname((string)realpath($file)),
                 function (string $message): void {

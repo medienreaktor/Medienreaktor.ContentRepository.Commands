@@ -6,6 +6,8 @@ namespace Medienreaktor\ContentRepository\Commands\Import;
 
 use Medienreaktor\ContentRepository\Commands\Input\PropertyStringConverter;
 use Medienreaktor\ContentRepository\Commands\Media\AssetImporter;
+use Medienreaktor\ContentRepository\Commands\Xml\ParsedAsset;
+use Medienreaktor\ContentRepository\Commands\Xml\ParsedManifest;
 use Medienreaktor\ContentRepository\Commands\Xml\ParsedNode;
 use Medienreaktor\ContentRepository\Commands\Xml\ParsedPage;
 use Medienreaktor\ContentRepository\Commands\Xml\ParsedSite;
@@ -34,7 +36,7 @@ use Neos\Flow\Annotations as Flow;
 use Neos\Media\Domain\Model\AssetInterface;
 
 /**
- * Makes the content tree a {@see ParsedSite} describes exist.
+ * Makes the content tree a {@see ParsedManifest} describes exist.
  *
  * The file is the desired state, so the importer's job is to make the graph match it. What that
  * means differs by level, and the level says which without the file having to:
@@ -53,7 +55,7 @@ use Neos\Media\Domain\Model\AssetInterface;
  *
  * 1. the node type *is* a content collection — children go directly into it;
  * 2. it has exactly one tethered content collection — children go there;
- * 3. it has several — the file has to say which, with seed:name;
+ * 3. it has several — the file has to say which, with crm:name;
  * 4. it has none — children go directly into it.
  *
  * That covers `main` on every document type without naming it, `content` on a hero, and the columns
@@ -83,13 +85,28 @@ final class XmlManifestImporter
      * @throws \RuntimeException with a message naming the line in the file that caused it
      */
     public function import(
-        ParsedSite $site,
+        ParsedManifest $manifest,
         string $workspaceName,
         string $baseDirectory,
         \Closure $onMessage,
         bool $dryRun = false,
     ): ImportReport {
         $report = new ImportReport();
+
+        // Assets first, and independently of any site: the media library is global, and a manifest
+        // is allowed to seed it and nothing else.
+        $assets = $this->importAssets($manifest->assets, $baseDirectory, $onMessage, $report, $dryRun);
+        $declaredAssetIds = [];
+
+        foreach ($manifest->assets as $asset) {
+            $declaredAssetIds[$asset->id] = $asset->line;
+        }
+
+        $site = $manifest->site;
+
+        if ($site === null) {
+            return $report;
+        }
 
         $contentRepository = $this->contentRepositoryRegistry->get(ContentRepositoryId::fromString($site->contentRepositoryId));
         $workspace = WorkspaceName::fromString($workspaceName);
@@ -102,13 +119,6 @@ final class XmlManifestImporter
             // collection, and a rebuild that cannot see it leaves it behind.
             VisibilityConstraints::createEmpty()
         );
-
-        $assets = $this->importAssets($site, $baseDirectory, $onMessage, $report, $dryRun);
-        $declaredAssetIds = [];
-
-        foreach ($site->assets as $asset) {
-            $declaredAssetIds[$asset->id] = $asset->line;
-        }
 
         foreach ($site->pages as $page) {
             $document = $this->resolveDocument($site, $page, $subgraph);
@@ -146,13 +156,14 @@ final class XmlManifestImporter
     }
 
     /**
+     * @param array<int,ParsedAsset> $declared
      * @return array<string,AssetInterface>
      */
-    private function importAssets(ParsedSite $site, string $baseDirectory, \Closure $onMessage, ImportReport $report, bool $dryRun): array
+    private function importAssets(array $declared, string $baseDirectory, \Closure $onMessage, ImportReport $report, bool $dryRun): array
     {
         $assets = [];
 
-        foreach ($site->assets as $asset) {
+        foreach ($declared as $asset) {
             if ($dryRun) {
                 // Nothing is imported, but a manifest pointing at a file that is not there is worth
                 // knowing about now rather than halfway through a real run. A URL is left alone —
@@ -185,7 +196,7 @@ final class XmlManifestImporter
             $result['reused'] ? $report->assetsReused++ : $report->assetsImported++;
         }
 
-        if (!$dryRun && $site->assets !== []) {
+        if (!$dryRun && $declared !== []) {
             // The nodes referencing these assets are written in this same process, but the
             // Content Repository serializes a reference by identifier and the object has to be
             // findable under it.

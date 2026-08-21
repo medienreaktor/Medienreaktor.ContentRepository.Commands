@@ -7,41 +7,48 @@ namespace Medienreaktor\ContentRepository\Commands\Xml;
 use Neos\Flow\Annotations as Flow;
 
 /**
- * Reads a seed XML file into {@see ParsedSite}, without touching the Content Repository.
+ * Reads a manifest XML file into {@see ParsedManifest}, without touching the Content Repository.
  *
  * The format describes the content tree it wants to exist, with node types as element names:
  *
- *     <seed:site xmlns:seed="https://medienreaktor.de/ns/neos-seed/1.0"
- *                xmlns:prop="https://medienreaktor.de/ns/neos-seed/1.0/property"
- *                xmlns:Medienreaktor.Site="https://medienreaktor.de/ns/nodetypes/Medienreaktor.Site"
- *                name="site" contentRepository="default" dimension="language=de">
- *       <seed:manifest>
- *         <seed:asset id="hero" href="images/hero.png" title="Hero"/>
- *       </seed:manifest>
- *       <seed:page path="/">
- *         <Medienreaktor.Site:Document.Page.Homepage>
- *           <Medienreaktor.Site:Content.Hero image="hero" alternativeText="Rectangle 85">
- *             <prop:title>Example <span class="highlight">headline.</span></prop:title>
- *           </Medienreaktor.Site:Content.Hero>
- *         </Medienreaktor.Site:Document.Page.Homepage>
- *       </seed:page>
- *     </seed:site>
+ *     <crm:manifest xmlns:crm="https://medienreaktor.de/ns/contentrepository-commands/manifest"
+ *                   xmlns:Medienreaktor.Site="Medienreaktor.Site">
+ *       <crm:assets>
+ *         <crm:asset id="hero" href="images/hero.png" title="Hero"/>
+ *       </crm:assets>
+ *       <crm:site name="site" contentRepository="default" dimension="language=de">
+ *         <crm:page path="/">
+ *           <Medienreaktor.Site:Document.Page.Homepage>
+ *             <Medienreaktor.Site:Content.Hero image="hero" alternativeText="Rectangle 85">
+ *               <title>Example <span class="highlight">headline.</span></title>
+ *             </Medienreaktor.Site:Content.Hero>
+ *           </Medienreaktor.Site:Document.Page.Homepage>
+ *         </crm:page>
+ *       </crm:site>
+ *     </crm:manifest>
  *
  * **A node type name is a QName.** A QName holds at most one colon, and a node type name holds
  * exactly one — so the package key becomes the namespace prefix and the rest the local name, which
  * makes the element name read as the node type name does everywhere else. Dots are legal in an
  * NCName, so both halves survive intact.
  *
- * **The namespace URI carries the package key, not the prefix.** XML treats a prefix as arbitrary
- * and reassignable: a tool may rewrite `Medienreaktor.Site:` to `ns0:` and mean the same document.
- * So the package key is read out of the URI, which has to end in `/ns/nodetypes/<PackageKey>`, and
- * the prefix is only a choice the file makes for its reader. Writing the prefix to match the package
- * key is the convention, not a requirement.
+ * **The namespace URI *is* the package key.** XML treats a prefix as arbitrary and reassignable: a
+ * tool may rewrite `Medienreaktor.Site:` to `ns0:` and mean the same document. So the identity lives
+ * in the URI, and the shortest URI that carries a package key is the package key itself. Writing the
+ * prefix to match is the convention, not a requirement.
  *
- * **A property is an attribute or a prop: element, interchangeably.** Both end up in the same place.
- * An attribute suits a short scalar; a prop: element holds markup literally, which an attribute can
- * only do escaped beyond legibility. Giving the same property both ways is an error rather than a
- * precedence rule, because a silent winner is how an edit gets ignored.
+ * **A property is an attribute or an unqualified child element, interchangeably.** Both end up in
+ * the same place. An attribute suits a short scalar; an element holds markup literally, which an
+ * attribute can only do escaped beyond legibility. Giving the same property both ways is an error
+ * rather than a precedence rule, because a silent winner is how an edit gets ignored.
+ *
+ * That an unqualified element is a property is what lets a schema validate one. XSD can only declare
+ * a local element in its own target namespace or in none at all — never in a foreign one — so a
+ * property in its own namespace would have to be declared globally and would then be permitted on
+ * every node type. Unqualified, each node type declares exactly its own.
+ *
+ * **Assets are global.** The media library is not partitioned by site, so <crm:assets> sits beside
+ * <crm:site> rather than inside it, and a manifest may carry assets and no site at all.
  *
  * What this parser does *not* do is check any of it against a node type: whether the node type
  * exists, whether a property is declared, whether a child is allowed. That needs the Content
@@ -51,31 +58,29 @@ use Neos\Flow\Annotations as Flow;
 #[Flow\Scope('singleton')]
 final class ManifestXmlParser
 {
-    public const string SEED_NAMESPACE = 'https://medienreaktor.de/ns/neos-seed/1.0';
-    public const string PROPERTY_NAMESPACE = 'https://medienreaktor.de/ns/neos-seed/1.0/property';
+    public const string MANIFEST_NAMESPACE = 'https://medienreaktor.de/ns/contentrepository-commands/manifest';
 
     /**
-     * The tail every node type namespace URI has to end with, capturing the package key.
+     * What a node type namespace has to look like: a package key, and nothing else.
      *
-     * Anchored at a path segment so that the host is free: Neos' own types are declared under
-     * neos.io and a site package under its vendor's domain, and neither should have to pretend to
-     * live somewhere else.
+     * Dots separate the segments and are legal in an NCName, so `Medienreaktor.Site` survives as
+     * written and needs no unwrapping.
      */
-    private const string NODE_TYPE_NAMESPACE_PATTERN = '#^https?://[^\s]+/ns/nodetypes/(?<packageKey>[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*)$#';
+    private const string PACKAGE_KEY_PATTERN = '#^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*$#';
 
     /**
      * @throws \RuntimeException if the file cannot be read, is not well-formed, or is ambiguous
      */
-    public function parseFile(string $file): ParsedSite
+    public function parseFile(string $file): ParsedManifest
     {
         if (!is_file($file) || !is_readable($file)) {
-            throw new \RuntimeException(sprintf('The seed file "%s" does not exist or cannot be read.', $file), 1787097620);
+            throw new \RuntimeException(sprintf('The manifest file "%s" does not exist or cannot be read.', $file), 1787097620);
         }
 
         $xml = file_get_contents($file);
 
         if ($xml === false) {
-            throw new \RuntimeException(sprintf('The seed file "%s" could not be read.', $file), 1787097621);
+            throw new \RuntimeException(sprintf('The manifest file "%s" could not be read.', $file), 1787097621);
         }
 
         return $this->parse($xml);
@@ -84,7 +89,7 @@ final class ManifestXmlParser
     /**
      * @throws \RuntimeException
      */
-    public function parse(string $xml): ParsedSite
+    public function parse(string $xml): ParsedManifest
     {
         return $this->parseDocument($this->load($xml));
     }
@@ -108,7 +113,7 @@ final class ManifestXmlParser
 
             if ($loaded === false) {
                 throw new \RuntimeException(
-                    sprintf('The seed XML is not well-formed: %s', self::describe($errors)),
+                    sprintf('The manifest XML is not well-formed: %s', self::describe($errors)),
                     1787097622
                 );
             }
@@ -120,72 +125,81 @@ final class ManifestXmlParser
         }
     }
 
-    private function parseDocument(\DOMDocument $document): ParsedSite
+    private function parseDocument(\DOMDocument $document): ParsedManifest
     {
         $root = $document->documentElement;
 
-        if ($root === null || $root->namespaceURI !== self::SEED_NAMESPACE || $root->localName !== 'site') {
+        if ($root === null || $root->namespaceURI !== self::MANIFEST_NAMESPACE || $root->localName !== 'manifest') {
             throw new \RuntimeException(
-                sprintf('A seed file has to have a <site> root element in the namespace %s.', self::SEED_NAMESPACE),
+                sprintf('A manifest file has to have a <manifest> root element in the namespace %s.', self::MANIFEST_NAMESPACE),
                 1787097623
             );
         }
 
-        $siteNodeName = $root->getAttribute('name');
-
-        if ($siteNodeName === '') {
-            throw new \RuntimeException('The <site> element needs a "name" attribute naming the site node.', 1787097624);
-        }
-
-        $contentRepositoryId = $root->getAttribute('contentRepository');
-        $dimension = $root->getAttribute('dimension');
-
         $assets = [];
-        $pages = [];
+        $assetsLine = null;
+        $site = null;
 
         foreach (self::elementChildrenOf($root) as $child) {
-            if ($child->namespaceURI !== self::SEED_NAMESPACE) {
+            if ($child->namespaceURI !== self::MANIFEST_NAMESPACE) {
                 throw new \RuntimeException(
-                    sprintf('Line %d: <site> takes <manifest> and <page> children, got <%s>.', $child->getLineNo(), $child->nodeName),
+                    sprintf('Line %d: <manifest> takes <assets> and <site> children, got <%s>.', $child->getLineNo(), $child->nodeName),
                     1787097625
                 );
             }
 
-            match ($child->localName) {
-                'manifest' => $assets = [...$assets, ...$this->parseManifest($child)],
-                'page' => $pages[] = $this->parsePage($child),
-                default => throw new \RuntimeException(
-                    sprintf('Line %d: <site> takes <manifest> and <page> children, got <%s>.', $child->getLineNo(), $child->nodeName),
-                    1787097626
-                ),
-            };
+            switch ($child->localName) {
+                case 'assets':
+                    // One block rather than several merged: two lists of the same thing is a merge
+                    // waiting to surprise someone, and there is no reason to write it twice.
+                    if ($assetsLine !== null) {
+                        throw new \RuntimeException(
+                            sprintf('Line %d: <manifest> takes one <assets> block, and there is already one on line %d.', $child->getLineNo(), $assetsLine),
+                            1787097641
+                        );
+                    }
+
+                    $assetsLine = $child->getLineNo();
+                    $assets = $this->parseAssets($child);
+                    break;
+                case 'site':
+                    if ($site !== null) {
+                        throw new \RuntimeException(
+                            sprintf('Line %d: a manifest describes one <site>, and there is already one on line %d.', $child->getLineNo(), $site->line),
+                            1787097642
+                        );
+                    }
+
+                    $site = $this->parseSite($child);
+                    break;
+                default:
+                    throw new \RuntimeException(
+                        sprintf('Line %d: <manifest> takes <assets> and <site> children, got <%s>.', $child->getLineNo(), $child->nodeName),
+                        1787097626
+                    );
+            }
         }
 
-        if ($pages === []) {
-            throw new \RuntimeException('The seed file describes no page, so there is nothing to import.', 1787097627);
+        // Assets without a site is a real thing to write; neither is not.
+        if ($assets === [] && $site === null) {
+            throw new \RuntimeException('The manifest describes neither assets nor a site, so there is nothing to import.', 1787097627);
         }
 
-        return new ParsedSite(
-            $siteNodeName,
-            $contentRepositoryId === '' ? 'default' : $contentRepositoryId,
-            self::parseDimension($dimension),
-            $assets,
-            $pages,
-        );
+        return new ParsedManifest($assets, $site);
     }
 
     /**
      * @return array<int,ParsedAsset>
      */
-    private function parseManifest(\DOMElement $manifest): array
+    private function parseAssets(\DOMElement $assets): array
     {
-        $assets = [];
+        $parsed = [];
         $seenIds = [];
 
-        foreach (self::elementChildrenOf($manifest) as $child) {
-            if ($child->namespaceURI !== self::SEED_NAMESPACE || $child->localName !== 'asset') {
+        foreach (self::elementChildrenOf($assets) as $child) {
+            if ($child->namespaceURI !== self::MANIFEST_NAMESPACE || $child->localName !== 'asset') {
                 throw new \RuntimeException(
-                    sprintf('Line %d: <manifest> takes <asset> children, got <%s>.', $child->getLineNo(), $child->nodeName),
+                    sprintf('Line %d: <assets> takes <asset> children, got <%s>.', $child->getLineNo(), $child->nodeName),
                     1787097628
                 );
             }
@@ -211,10 +225,52 @@ final class ManifestXmlParser
 
             $seenIds[$id] = $child->getLineNo();
             $title = $child->getAttribute('title');
-            $assets[] = new ParsedAsset($id, $href, $title === '' ? null : $title, $child->getLineNo());
+            $parsed[] = new ParsedAsset($id, $href, $title === '' ? null : $title, $child->getLineNo());
         }
 
-        return $assets;
+        return $parsed;
+    }
+
+    private function parseSite(\DOMElement $site): ParsedSite
+    {
+        $siteNodeName = $site->getAttribute('name');
+
+        if ($siteNodeName === '') {
+            throw new \RuntimeException(
+                sprintf('Line %d: the <site> element needs a "name" attribute naming the site node.', $site->getLineNo()),
+                1787097624
+            );
+        }
+
+        $pages = [];
+
+        foreach (self::elementChildrenOf($site) as $child) {
+            if ($child->namespaceURI !== self::MANIFEST_NAMESPACE || $child->localName !== 'page') {
+                throw new \RuntimeException(
+                    sprintf('Line %d: <site> takes <page> children, got <%s>.', $child->getLineNo(), $child->nodeName),
+                    1787097643
+                );
+            }
+
+            $pages[] = $this->parsePage($child);
+        }
+
+        if ($pages === []) {
+            throw new \RuntimeException(
+                sprintf('Line %d: the <site> describes no page, so there is nothing to import into it.', $site->getLineNo()),
+                1787097644
+            );
+        }
+
+        $contentRepositoryId = $site->getAttribute('contentRepository');
+
+        return new ParsedSite(
+            $siteNodeName,
+            $contentRepositoryId === '' ? 'default' : $contentRepositoryId,
+            self::parseDimension($site->getAttribute('dimension')),
+            $pages,
+            $site->getLineNo(),
+        );
     }
 
     private function parsePage(\DOMElement $page): ParsedPage
@@ -249,10 +305,10 @@ final class ManifestXmlParser
 
         foreach ($element->attributes ?? [] as $attribute) {
             /** @var \DOMAttr $attribute */
-            if ($attribute->namespaceURI === self::SEED_NAMESPACE) {
+            if ($attribute->namespaceURI === self::MANIFEST_NAMESPACE) {
                 if ($attribute->localName !== 'name') {
                     throw new \RuntimeException(
-                        sprintf('Line %d: <%s> does not take the seed attribute "%s".', $element->getLineNo(), $element->nodeName, $attribute->localName),
+                        sprintf('Line %d: <%s> does not take the manifest attribute "%s".', $element->getLineNo(), $element->nodeName, $attribute->localName),
                         1787097633
                     );
                 }
@@ -261,7 +317,7 @@ final class ManifestXmlParser
                 continue;
             }
 
-            // A namespaced attribute that is neither seed: nor plain is a mistake worth naming: it
+            // A namespaced attribute that is neither crm: nor plain is a mistake worth naming: it
             // would otherwise be read as a property under its local name and land somewhere odd.
             if ($attribute->namespaceURI !== null && !self::isXmlnsDeclaration($attribute)) {
                 throw new \RuntimeException(
@@ -281,7 +337,8 @@ final class ManifestXmlParser
         $children = [];
 
         foreach (self::elementChildrenOf($element) as $child) {
-            if ($child->namespaceURI === self::PROPERTY_NAMESPACE) {
+            // Unqualified is a property; a namespace means a node type.
+            if ($child->namespaceURI === null) {
                 $propertyName = (string)$child->localName;
 
                 if (isset($propertySources[$propertyName])) {
@@ -296,7 +353,7 @@ final class ManifestXmlParser
                 continue;
             }
 
-            if ($child->namespaceURI === self::SEED_NAMESPACE) {
+            if ($child->namespaceURI === self::MANIFEST_NAMESPACE) {
                 throw new \RuntimeException(
                     sprintf('Line %d: <%s> is not allowed inside a node.', $child->getLineNo(), $child->nodeName),
                     1787097636
@@ -312,30 +369,33 @@ final class ManifestXmlParser
     }
 
     /**
-     * The node type name an element stands for, from its namespace URI and local name.
+     * The node type name an element stands for: its namespace is the package key, its local name the
+     * rest.
      */
     private static function nodeTypeNameOf(\DOMElement $element): string
     {
+        // Reachable at the one position where a node is expected but an unqualified element is not a
+        // property: the document inside a <page>.
         if ($element->namespaceURI === null) {
             throw new \RuntimeException(
-                sprintf('Line %d: <%s> is in no namespace, so no node type can be resolved for it. Declare the package namespace and use it as the element prefix.', $element->getLineNo(), $element->nodeName),
+                sprintf('Line %d: <%s> is in no namespace, so it reads as a property rather than a node. A node needs its package key as the element namespace.', $element->getLineNo(), $element->nodeName),
                 1787097637
             );
         }
 
-        if (preg_match(self::NODE_TYPE_NAMESPACE_PATTERN, $element->namespaceURI, $matches) !== 1) {
+        if (preg_match(self::PACKAGE_KEY_PATTERN, $element->namespaceURI) !== 1) {
             throw new \RuntimeException(
-                sprintf('Line %d: the namespace "%s" of <%s> is not a node type namespace; it has to end in /ns/nodetypes/<PackageKey>.', $element->getLineNo(), $element->namespaceURI, $element->nodeName),
+                sprintf('Line %d: the namespace "%s" of <%s> is not a package key, so no node type can be resolved for it.', $element->getLineNo(), $element->namespaceURI, $element->nodeName),
                 1787097638
             );
         }
 
-        return $matches['packageKey'] . ':' . $element->localName;
+        return $element->namespaceURI . ':' . $element->localName;
     }
 
     /**
      * Text between elements is whitespace in a hand-indented file, and a mistake otherwise —
-     * most likely a property value written as element content instead of into a prop: element,
+     * most likely a property value written as element content instead of into a property element,
      * where it would be silently dropped.
      *
      * A CDATA section arrives as a DOMText, both because DOMCdataSection extends it and because
@@ -350,7 +410,7 @@ final class ManifestXmlParser
 
             if (trim($child->textContent) !== '') {
                 throw new \RuntimeException(
-                    sprintf('Line %d: <%s> has text content ("%s"). A property value belongs in an attribute or a prop: element.', $element->getLineNo(), $element->nodeName, self::shorten(trim($child->textContent))),
+                    sprintf('Line %d: <%s> has text content ("%s"). A property value belongs in an attribute or a property element.', $element->getLineNo(), $element->nodeName, self::shorten(trim($child->textContent))),
                     1787097639
                 );
             }
@@ -358,9 +418,9 @@ final class ManifestXmlParser
     }
 
     /**
-     * The markup inside a prop: element, serialized as written.
+     * The markup inside a property element, serialized as written.
      *
-     * Child elements are in no namespace — the seed file declares no default namespace — so they
+     * Child elements are in no namespace — the manifest declares no default namespace — so they
      * serialize as the plain HTML they are, without a namespace declaration being added.
      */
     private static function innerXmlOf(\DOMElement $element): string
@@ -372,8 +432,8 @@ final class ManifestXmlParser
             $inner .= $document?->saveXML($child) ?? '';
         }
 
-        // A prop: element written across lines for legibility should not carry the indentation into
-        // the property, but inner whitespace is content and stays.
+        // A property element written across lines for legibility should not carry the indentation
+        // into the property, but inner whitespace is content and stays.
         return trim($inner);
     }
 
