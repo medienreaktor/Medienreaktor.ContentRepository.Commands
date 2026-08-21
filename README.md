@@ -335,7 +335,10 @@ No schema is ever copied. Two schemas sharing a `targetNamespace` resolve silent
 
 The node type name and each property's declared type are emitted as `xs:documentation`.
 
-References are not emitted: a manifest naming one fails against the schema rather than validating and being skipped by the import.
+Not emitted:
+
+- **References.** The format cannot set one.
+- **Underscore-prefixed properties.** Neos declares `_nodeType`, `_hidden` and the like so the inspector renders an editor, then intercepts them by name and issues something other than a property write. Setting one stores a value nothing reads.
 
 A node type with several content collections gets the union of their constraints, which is wider than the importer allows.
 

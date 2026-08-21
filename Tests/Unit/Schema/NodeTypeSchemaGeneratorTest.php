@@ -255,6 +255,20 @@ final class NodeTypeSchemaGeneratorTest extends TestCase
     }
 
     /**
+     * Neos declares these so the inspector renders an editor, then intercepts them by name and issues
+     * something other than a property write. A manifest setting one would store a value nothing reads.
+     */
+    public function testAnUnderscorePrefixedPseudoPropertyIsNotEmitted(): void
+    {
+        self::assertStringNotContainsString('_hidden', $this->schemas['Acme.Site.xsd']);
+        self::assertStringNotContainsString('_nodeType', $this->schemas['Acme.Site.xsd']);
+
+        self::assertNotSame([], $this->validate($this->manifest(
+            '<Acme.Site:Content.Hero _hidden="true"/>'
+        ))['documentErrors']);
+    }
+
+    /**
      * @return array{schemaErrors:array<int,string>,documentErrors:array<int,string>}
      */
     private function validate(string $xml): array
@@ -319,7 +333,11 @@ final class NodeTypeSchemaGeneratorTest extends TestCase
     private static function nodeTypes(): array
     {
         return [
-            'Neos.Neos:Node' => ['abstract' => true],
+            'Neos.Neos:Node' => [
+                'abstract' => true,
+                // Pseudo-properties: declared for the inspector, never written as properties.
+                'properties' => ['_nodeType' => ['type' => 'string'], '_hidden' => ['type' => 'boolean']],
+            ],
             'Neos.Neos:Document' => [
                 'abstract' => true,
                 'superTypes' => ['Neos.Neos:Node' => true],

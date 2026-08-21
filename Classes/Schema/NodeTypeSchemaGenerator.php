@@ -584,11 +584,16 @@ final class NodeTypeSchemaGenerator
     }
 
     /**
-     * The declared type of every property, by name.
+     * The declared type of every property a manifest may set, by name.
      *
-     * References are left out on purpose. Neos 9 keeps them out of `properties` anyway, and the
-     * format cannot set them — so a manifest naming one should fail against the schema rather than
-     * validate and be silently skipped by the importer.
+     * References are left out: Neos keeps them out of `properties` anyway, and the format cannot set
+     * them.
+     *
+     * So are underscore-prefixed names. Neos declares those so the inspector renders an editor for
+     * them, then intercepts them by name and issues something other than a property write —
+     * `_nodeType` becomes ChangeNodeAggregateType, `_hidden` becomes the disabled subtree tag. Writing
+     * one as a property stores a value nothing reads, and for `_hidden` it would look like it worked
+     * while the node stayed visible.
      *
      * @return array<string,string>
      */
@@ -598,6 +603,10 @@ final class NodeTypeSchemaGenerator
 
         foreach (array_keys($nodeType->getProperties()) as $propertyName) {
             $propertyName = (string)$propertyName;
+
+            if (str_starts_with($propertyName, '_')) {
+                continue;
+            }
 
             if (preg_match(self::NC_NAME_PATTERN, $propertyName) !== 1) {
                 continue;
