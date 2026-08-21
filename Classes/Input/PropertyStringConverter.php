@@ -7,7 +7,7 @@ namespace Medienreaktor\ContentRepository\Commands\Input;
 use Neos\Flow\Annotations as Flow;
 
 /**
- * Turns the string a property has in an XML seed file into the type its node type declares.
+ * Turns the string a property has in a manifest XML file into the type its node type declares.
  *
  * XML carries strings and nothing else, so `showDash="true"` and `width="7"` arrive as text while
  * the Content Repository validates them against boolean and integer and rejects the strings. The

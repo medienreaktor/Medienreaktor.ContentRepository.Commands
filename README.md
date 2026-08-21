@@ -8,7 +8,7 @@ CLI Commands for the Event Sourced Content Repository of Neos CMS.
 
 The `create` / `setnodeproperties` / `remove` commands directly dispatch Commands on the Content Repository. The Content Repository handles the Command and emits the Event to the Event Store. The `find` commands read the content graph, so that a script can locate the nodes it needs to act on. `importasset` puts a file into the media library, so that a script can fill an asset property.
 
-Those are primitives, composed by the caller. `importxml` is the one command that is not: it takes a file describing a whole content tree and makes that tree exist. Where a seed built from the primitives is a script that has to get its order, its ids and its shell quoting right, the same seed as XML is a document — see [Import a content tree](#import-a-content-tree).
+Those are primitives, composed by the caller. `importxml` is the one command that is not: it takes a file describing a whole content tree and makes that tree exist. Where a seed built from the primitives is a script that has to get its order, its ids and its shell quoting right, the same seed as XML is a document — see [Import a content tree](#import-a-content-tree). `exportxsd` writes the schemas that make such a document checkable while it is being written.
 
 ### Create node aggregate
 
@@ -159,65 +159,79 @@ flow cr:createnodeaggregate ... --property-values="{\"image\":$IMAGE}"
 
 ### Import a content tree
 
-Use `cr:importxml` to import a content tree from a seed XML file.
+Use `cr:importxml` to import a content tree from a manifest XML file.
 
 | Argument        | Description                                          | Example                     |
 | --------------- | ---------------------------------------------------- | --------------------------- |
-| `file`          | Path to the seed XML file                            | `seed/LandingPage.xml`      |
+| `file`          | Path to the manifest XML file                        | `manifest/Site.xml`         |
 | `workspaceName` | Optional. The workspace to write to. Defaults to `live`. | `live`                  |
 | `dryRun`        | Optional. Report what the import would do, and write nothing. | —                  |
 
 ```sh
-flow cr:importxml --file seed/LandingPage.xml
+flow cr:importxml --file manifest/Site.xml
 ```
 
 The file describes the tree it wants to exist, with node types as element names:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
-<seed:site
-    xmlns:seed="https://medienreaktor.de/ns/neos-seed/1.0"
-    xmlns:prop="https://medienreaktor.de/ns/neos-seed/1.0/property"
-    xmlns:Acme.Site="https://acme.example/ns/nodetypes/Acme.Site"
-    name="site" contentRepository="default" dimension="language=de">
+<crm:manifest
+    xmlns:crm="https://medienreaktor.de/ns/contentrepository-commands/manifest"
+    xmlns:Acme.Site="Acme.Site">
 
-  <seed:manifest>
-    <seed:asset id="hero" href="images/hero.png" title="Hero"/>
-    <seed:asset id="logo" href="images/logo.svg" title="Logo"/>
-  </seed:manifest>
+  <crm:assets>
+    <crm:asset id="hero" href="images/hero.png" title="Hero"/>
+    <crm:asset id="logo" href="images/logo.svg" title="Logo"/>
+  </crm:assets>
 
-  <seed:page path="/">
-    <Acme.Site:Document.Page.Homepage title="Acme" logo="logo">
-      <Acme.Site:Content.Hero image="hero" alternativeText="Rectangle 85">
-        <prop:title>Example <span class="highlight">headline.</span></prop:title>
-      </Acme.Site:Content.Hero>
-      <Acme.Site:Content.Grid columns="2" layout="6-6">
-        <Acme.Site:Content.Grid.Cell>
-          <Acme.Site:Content.Teaser number="01" title="Military"/>
-        </Acme.Site:Content.Grid.Cell>
-      </Acme.Site:Content.Grid>
-    </Acme.Site:Document.Page.Homepage>
-  </seed:page>
-</seed:site>
+  <crm:site name="site" contentRepository="default" dimension="language=de">
+    <crm:page path="/">
+      <Acme.Site:Document.Page.Homepage title="Acme" logo="logo">
+        <Acme.Site:Content.Hero image="hero" alternativeText="Rectangle 85">
+          <title>Example <span class="highlight">headline.</span></title>
+        </Acme.Site:Content.Hero>
+        <Acme.Site:Content.Grid columns="2" layout="6-6">
+          <Acme.Site:Content.Grid.Cell>
+            <Acme.Site:Content.Teaser number="01" title="Military"/>
+          </Acme.Site:Content.Grid.Cell>
+        </Acme.Site:Content.Grid>
+      </Acme.Site:Document.Page.Homepage>
+    </crm:page>
+  </crm:site>
+</crm:manifest>
 ```
+
+`cr:exportxsd` writes schemas for this, so an IDE validates it and completes node types, properties and select box values as you type. See [Export XML schemas](#export-xml-schemas).
+
+#### One `<crm:assets>`, one `<crm:site>`, both optional
+
+Assets sit beside the site rather than inside it, because the Neos media library is global — an asset is not owned by a site. So a manifest carrying only assets is a legitimate thing to write: it seeds the media library and no content.
+
+One site, because the importer handles one. Several would mean resolving a content repository and a dimension per site, which nothing needs yet.
 
 #### The element name is the node type name
 
 A QName holds at most one colon and a node type name holds exactly one, so the package key becomes the namespace prefix and the rest the local name. Dots are legal in an NCName, so `Acme.Site:Content.Grid.Cell` survives intact and the element reads as the node type does in `NodeTypes.yaml`.
 
-**The namespace URI carries the package key, not the prefix.** XML treats a prefix as arbitrary and reassignable — a formatter may rewrite `Acme.Site:` to `ns0:` and mean the same document — so the package key is read out of the URI, which has to end in `/ns/nodetypes/<PackageKey>`. Writing the prefix to match the package key is a convention for the reader, not a requirement. The host is free, so `Neos.Neos` can live under `neos.io` and a site package under its own vendor's domain.
+**The namespace URI *is* the package key.** XML treats a prefix as arbitrary and reassignable — a formatter may rewrite `Acme.Site:` to `ns0:` and mean the same document — so the identity lives in the URI, and the shortest URI that carries a package key is the package key itself. Writing the prefix to match is a convention for the reader, not a requirement.
 
-#### A property is an attribute or a `prop:` element
+Relative URI references as namespace names are deprecated by Namespaces in XML 1.0 Appendix A. In practice a namespace name is compared as an opaque string, and libxml, Xerces and IntelliJ all leave it alone rather than resolving it against the document.
 
-Both end up in the same place. An attribute suits a short scalar; a `prop:` element holds markup literally, which an attribute can only do escaped past legibility:
+#### A property is an attribute or an unqualified element
+
+**Unqualified means a property; a namespace means a node type.** That is the whole distinction, and it needs no lookup — which is what keeps the parser able to reject a malformed file without a database.
+
+Both forms end up in the same place. An attribute suits a short scalar; an element holds markup literally, which an attribute can only do escaped past legibility:
 
 ```xml
 <Acme.Site:Content.Heading>
-  <prop:title><h2>Example <span class="highlight">headline.</span></h2></prop:title>
+  <title><h2>Example <span class="highlight">headline.</span></h2></title>
 </Acme.Site:Content.Heading>
 ```
 
-Setting the same property both ways is an error rather than a precedence rule, because a silent winner is how an edit gets ignored. Leading and trailing whitespace around a `prop:` element's content is indentation and dropped; whitespace inside it is content and kept.
+Setting the same property both ways is an error rather than a precedence rule, because a silent winner is how an edit gets ignored. Leading and trailing whitespace around an element's content is indentation and dropped; whitespace inside it is content and kept.
+
+Properties are unqualified so that a schema can validate them. XSD can only declare a local element in its own target namespace or in none at all — never in a foreign one — so a property in its own namespace would have to be declared globally, and would then be permitted on every node type. Unqualified, each node type declares exactly its own.
 
 Values are converted to the type the node type declares, so `showDash="true"` arrives as a boolean and `width="7"` as an integer if that is how they are declared. A value that does not fit is reported with the property name rather than cast: `(bool) "false"` is `true`, and a dash nobody asked for takes an afternoon to find.
 
@@ -248,16 +262,16 @@ Either way the outcome is determined by the file and not by what came before, wh
 
 1. the node type **is** a content collection — children go directly into it;
 2. it has **exactly one** tethered content collection — children go there;
-3. it has **several** — the file has to say which, with `seed:name`;
+3. it has **several** — the file has to say which, with `crm:name`;
 4. it has **none** — children go directly into it.
 
 That covers `main` on every document type without naming it, and `content` on an element that has one. Case 3 is the one worth having: an element with `column0` and `column1` would otherwise take a guess, and content silently landing in the first column looks like a rendering bug.
 
-Where a name is needed, or wanted for clarity, `seed:name` gives it:
+Where a name is needed, or wanted for clarity, `crm:name` gives it:
 
 ```xml
 <Acme.Site:Content.Columns.Two>
-  <Neos.Neos:ContentCollection seed:name="column1">
+  <Neos.Neos:ContentCollection crm:name="column1">
     <Acme.Site:Content.Text text="Left."/>
   </Neos.Neos:ContentCollection>
 </Acme.Site:Content.Columns.Two>
@@ -268,13 +282,13 @@ Where a name is needed, or wanted for clarity, `seed:name` gives it:
 A property the node type does not declare stops the import. It is a typo, and a seed file is a statement of the desired state — quietly dropping part of it would mean the page that comes out is not the page that was asked for:
 
 ```
-Error: Line 6: Medienreaktor.Site:Document.Page.Homepage has no property "titel".
+Error: Line 6: Acme.Site:Document.Page.Homepage has no property "titel".
 ```
 
 A property that is really a *reference* warns instead, and the rest of the import proceeds. Neos 9 keeps references separate from properties — a node type that spells one `type: references` has it normalised out of `properties` into the node type's `references` section, so `hasProperty()` is false for it — and this format cannot set references yet. That is the importer's limit rather than a mistake in the file, so it should not stop the other forty-odd nodes from being seeded:
 
 ```
-Warning: Line 10: "footerItems" of Medienreaktor.Site:Document.Page.Homepage is a reference, not a property. This format cannot set references yet, so it was skipped.
+Warning: Line 10: "footerItems" of Acme.Site:Document.Page.Homepage is a reference, not a property. This format cannot set references yet, so it was skipped.
 Created 0 node(s) in 1 page(s), updated 1 document(s), removed 0, assets: 0 imported, 1 reused. 1 warning(s).
 ```
 
@@ -282,17 +296,68 @@ Warnings are printed as they are collected *and* counted in the summary: one bur
 
 #### Assets are declared once and referenced by id
 
-`<seed:manifest>` lists the files the page needs; content refers to them by id (`image="hero"`). The ids are local to the file, which is what keeps it portable: an asset identifier differs in every database, an id does not. A relative `href` is resolved against the directory of the XML file, not the working directory of the command. Importing deduplicates on content, so re-running a seed does not fill the media library with copies.
+`<crm:assets>` lists the files the content needs; content refers to them by id (`image="hero"`). The ids are local to the file, which is what keeps it portable: an asset identifier differs in every database, an id does not. A relative `href` is resolved against the directory of the XML file, not the working directory of the command. Importing deduplicates on content, so re-running a seed does not fill the media library with copies.
 
 #### `--dry-run`
 
-Unlike the other commands here this one takes a dry run, because it is a whole file rather than a single operation and there is a real question of whether it will read. A dry run walks the whole tree, resolving every node type and every property against it, checking that each asset reference is declared and each manifest file is there, and writes nothing.
+Unlike the other commands here this one takes a dry run, because it is a whole file rather than a single operation and there is a real question of whether it will read. A dry run walks the whole tree, resolving every node type and every property against it, checking that each asset reference is declared and each asset file is there, and writes nothing.
 
 It can walk the whole tree because everything it checks follows from the node types rather than from any node existing — including which collection children belong in, so an element with two of them fails here rather than halfway through a real run.
 
 What it cannot check is the Content Repository's own constraints: whether this node type may sit under that one is answered by handling the command, and a dry run issues none. **It is a proofread, not a rehearsal** — a clean dry run does not promise a clean import.
 
 It reports no removal count, because it does not read the content that is already there.
+
+### Export XML schemas
+
+Use `cr:exportxsd` to write XML schemas for the installed node types, so that an IDE validates a manifest and completes node types, properties and select box values while it is being written.
+
+| Argument            | Description                                                              | Example     |
+| ------------------- | ------------------------------------------------------------------------ | ----------- |
+| `target`            | Optional. Directory to write to, relative to the current directory. Defaults to `Schema`. | `Schema` |
+| `contentRepository` | Optional. Whose node types to read. Defaults to `default`.               | `default`   |
+
+```sh
+flow cr:exportxsd --target Schema
+```
+
+It writes one schema per package that declares at least one non-abstract node type, named after the package key, plus `all.xsd`. It does **not** write the manifest schema, and it neither reads nor rewrites a manifest — the schemas describe the installed package set rather than any one file, which is why the command takes a directory.
+
+#### No configuration, in the file or in the IDE
+
+A manifest needs no `xsi:schemaLocation`, and the project needs no external-resource mapping or XML catalog. An IDE resolves a namespace by scanning the project for a matching `targetNamespace`, and that scan reaches into the Composer install directory even when it is gitignored — so the manifest schema is found where it ships, in this package.
+
+Which is also why nothing is ever copied. Two schemas sharing a `targetNamespace` resolve **silently and arbitrarily**: a manifest gets validated against whichever the IDE picked, with no warning that a second candidate existed. A copy is harmless while identical and wrong the moment it drifts — which is what happens when the package is updated without re-running the command. For the same reason the generated schemas go to one shared directory rather than beside each manifest.
+
+`all.xsd` exists for the command line, where nothing resolves a namespace on its own:
+
+```sh
+xmllint --noout --schema Schema/all.xsd manifest/Site.xml
+```
+
+An IDE has no use for it.
+
+#### What the schemas express
+
+Everything the node types do, and nothing on top:
+
+- **which node types exist**, one element per non-abstract one, the element reading as the node type does in `NodeTypes.yaml`;
+- **which properties each takes**, as attributes and as unqualified elements, typed — so `<showDash>maybe</showDash>` is an error;
+- **which values a select box allows**, as an enumeration, in both the attribute and the element form;
+- **what may go inside what**, from the same questions the importer asks, so a leaf content type correctly takes nothing and a grid takes what its constraints allow;
+- **which document types a `<crm:page>` accepts**, through a substitution group each generated schema enrols its own document types into.
+
+The node type name and each property's declared type are emitted as `xs:documentation`, which an IDE shows on hover — and hands to an agent over its MCP.
+
+References are left out, because the format cannot set them: a manifest naming one should fail against the schema rather than validate and be silently skipped by the import.
+
+Two places where the schema is deliberately not a mirror of Neos. Root node types are left out, since nothing can be created under a manifest that is not a child of something. And a node type with several content collections gets the union of their constraints, because a global element declaration carries one type and cannot vary by `crm:name` — a widening, so no valid manifest is ever rejected. Between the schema, the parser and the Content Repository the tree still comes out valid, which is all any of the three has to guarantee on its own.
+
+#### Commit them, and re-run when the node types change
+
+The schemas follow the installed packages, so they go stale when a `NodeTypes.yaml` changes or a package is installed. Output is ordered — packages, node types and properties all sorted — so a regenerated set diffs cleanly and a stale one is visible in review.
+
+**An IDE may keep serving the previous schemas.** These are written from a CLI, and an IDE indexes what it is told about, so a manifest can go on being validated against the old schema until the change is picked up. The failure mode is confusing rather than loud: errors that look real, pointing at correct lines.
 
 ### Passing property values
 

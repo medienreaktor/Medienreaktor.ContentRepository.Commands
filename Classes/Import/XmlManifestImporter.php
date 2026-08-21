@@ -453,7 +453,7 @@ final class XmlManifestImporter
             $names = array_map(static fn (TetheredNodeTypeDefinition $definition): string => $definition->name->value, $collections);
 
             throw new \RuntimeException(
-                sprintf('Line %d: %s has %d content collections (%s), so the file has to say which one the children go into, with seed:name.', $parsed->line, $parsed->nodeTypeName, count($collections), implode(', ', $names)),
+                sprintf('Line %d: %s has %d content collections (%s), so the file has to say which one the children go into, with crm:name.', $parsed->line, $parsed->nodeTypeName, count($collections), implode(', ', $names)),
                 1787097676
             );
         }
@@ -464,7 +464,7 @@ final class XmlManifestImporter
     }
 
     /**
-     * The tethered node a seed:name child stands for.
+     * The tethered node a crm:name child stands for.
      */
     private static function tetheredDefinitionFor(ParsedNode $parsed, NodeType $nodeType, string $parentNodeTypeName): TetheredNodeTypeDefinition
     {
