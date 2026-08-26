@@ -1,5 +1,7 @@
 # Medienreaktor.ContentRepository.Commands
 
+[![CI](https://github.com/medienreaktor/Medienreaktor.ContentRepository.Commands/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/medienreaktor/Medienreaktor.ContentRepository.Commands/actions/workflows/ci.yml)
+
 CLI Commands for the Event Sourced Content Repository of Neos CMS.
 
 **Note:** This package is still work in progress. Use with care.
