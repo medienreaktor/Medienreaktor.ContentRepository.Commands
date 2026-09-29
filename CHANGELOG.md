@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `<crm:page node="…">` addresses a document by its node aggregate id, as an alternative to `path`.
+  A document created in the Neos UI has no node name, so no path reaches it.
+- `<crm:asset identifier="…">` uses an asset already in the media library, as an alternative to
+  `href`. This is how an image variant with an editor's crop is reused.
+- The `cr:importxml` summary counts referenced assets separately from imported and reused ones.
+
 ## [0.6.1] - 2026-08-21
 
 ### Fixed

@@ -103,17 +103,26 @@
                     </xs:documentation>
                 </xs:annotation>
             </xs:attribute>
-            <xs:attribute name="href" type="xs:string" use="required">
+            <!-- Exactly one of href and identifier; XSD 1.0 cannot say so, the importer does. -->
+            <xs:attribute name="href" type="xs:string">
                 <xs:annotation>
                     <xs:documentation>
                         Path to the file, resolved against the directory of this manifest, or an
-                        http(s) URL.
+                        http(s) URL. Either this or identifier.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="identifier" type="xs:string">
+                <xs:annotation>
+                    <xs:documentation>
+                        Identifier of an asset already in the media library, used as it is. Ties the
+                        manifest to one database. Either this or href.
                     </xs:documentation>
                 </xs:annotation>
             </xs:attribute>
             <xs:attribute name="title" type="xs:string">
                 <xs:annotation>
-                    <xs:documentation>Title in the media browser. Defaults to the file name.</xs:documentation>
+                    <xs:documentation>Title in the media browser. Defaults to the file name. Only with href.</xs:documentation>
                 </xs:annotation>
             </xs:attribute>
         </xs:complexType>
@@ -161,9 +170,18 @@
             <xs:sequence>
                 <xs:element ref="crm:document"/>
             </xs:sequence>
-            <xs:attribute name="path" type="xs:string" use="required">
+            <!-- Exactly one of path and node; XSD 1.0 cannot say so, the importer does. -->
+            <xs:attribute name="path" type="xs:string">
                 <xs:annotation>
-                    <xs:documentation>Path relative to the site node; "/" is the site node itself.</xs:documentation>
+                    <xs:documentation>Path of node names relative to the site node; "/" is the site node itself. Either this or node.</xs:documentation>
+                </xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="node" type="xs:string">
+                <xs:annotation>
+                    <xs:documentation>
+                        Node aggregate id of the document. For a document without a node name, which
+                        is every one created in the Neos UI. Either this or path.
+                    </xs:documentation>
                 </xs:annotation>
             </xs:attribute>
         </xs:complexType>

@@ -346,7 +346,7 @@ final class CrCommandController extends CommandController
             }
 
             $this->outputMessage(
-                '<success>Created %d node(s) in %d page(s), reconciled %d matched node(s), removed %d, assets: %d imported, %d reused.</success>%s',
+                '<success>Created %d node(s) in %d page(s), reconciled %d matched node(s), removed %d, assets: %d imported, %d reused, %d referenced.</success>%s',
                 [
                     $report->nodesCreated,
                     $report->pagesVisited,
@@ -354,6 +354,7 @@ final class CrCommandController extends CommandController
                     $report->nodesRemoved,
                     $report->assetsImported,
                     $report->assetsReused,
+                    $report->assetsReferenced,
                     $warnings,
                 ]
             );

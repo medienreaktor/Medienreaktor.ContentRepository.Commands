@@ -86,6 +86,19 @@ final class AssetImporter
     }
 
     /**
+     * The asset the media library holds under an identifier, whatever its concrete class.
+     *
+     * Looked up through the repository of the base class, so an image variant is found as one
+     * rather than having to be asked for by type.
+     */
+    public function find(string $identifier): ?AssetInterface
+    {
+        $asset = $this->assetRepository->findByIdentifier($identifier);
+
+        return $asset instanceof AssetInterface ? $asset : null;
+    }
+
+    /**
      * The identifier of an asset, as a property value refers to it.
      */
     public function identifierOf(AssetInterface $asset): string

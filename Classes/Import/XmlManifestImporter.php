@@ -6,7 +6,10 @@ namespace Medienreaktor\ContentRepository\Commands\Import;
 
 use Medienreaktor\ContentRepository\Commands\Input\PropertyStringConverter;
 use Medienreaktor\ContentRepository\Commands\Media\AssetImporter;
+use Medienreaktor\ContentRepository\Commands\Xml\PageNode;
+use Medienreaktor\ContentRepository\Commands\Xml\PagePath;
 use Medienreaktor\ContentRepository\Commands\Xml\ParsedAsset;
+use Medienreaktor\ContentRepository\Commands\Xml\ParsedExistingAsset;
 use Medienreaktor\ContentRepository\Commands\Xml\ParsedManifest;
 use Medienreaktor\ContentRepository\Commands\Xml\ParsedNode;
 use Medienreaktor\ContentRepository\Commands\Xml\ParsedPage;
@@ -124,7 +127,7 @@ final class XmlManifestImporter
             $document = $this->resolveDocument($site, $page, $subgraph);
             $report->pagesVisited++;
 
-            $onMessage(sprintf('Page %s: %s', $page->path, $document->nodeTypeName->value));
+            $onMessage(sprintf('Page %s: %s', $page->address->describe(), $document->nodeTypeName->value));
 
             if ($dryRun) {
                 $documentNodeType = self::requireNodeType($contentRepository, $document->nodeTypeName, $page->document->line);
@@ -156,7 +159,7 @@ final class XmlManifestImporter
     }
 
     /**
-     * @param array<int,ParsedAsset> $declared
+     * @param array<int,ParsedAsset|ParsedExistingAsset> $declared
      * @return array<string,AssetInterface>
      */
     private function importAssets(array $declared, string $baseDirectory, \Closure $onMessage, ImportReport $report, bool $dryRun): array
@@ -164,6 +167,15 @@ final class XmlManifestImporter
         $assets = [];
 
         foreach ($declared as $asset) {
+            if ($asset instanceof ParsedExistingAsset) {
+                // Looked up on a dry run too: it only reads, and an identifier that names nothing
+                // is exactly what a proofread is for.
+                $assets[$asset->id] = $this->findExistingAsset($asset);
+                $report->assetsReferenced++;
+
+                continue;
+            }
+
             if ($dryRun) {
                 // Nothing is imported, but a manifest pointing at a file that is not there is worth
                 // knowing about now rather than halfway through a real run. A URL is left alone —
@@ -201,34 +213,86 @@ final class XmlManifestImporter
             // Content Repository serializes a reference by identifier and the object has to be
             // findable under it.
             $this->assetImporter->persist();
-            $onMessage(sprintf('Assets: %d imported, %d reused.', $report->assetsImported, $report->assetsReused));
+            $onMessage(sprintf('Assets: %d imported, %d reused, %d referenced.', $report->assetsImported, $report->assetsReused, $report->assetsReferenced));
         }
 
         return $assets;
     }
 
+    private function findExistingAsset(ParsedExistingAsset $asset): AssetInterface
+    {
+        $existing = $this->assetImporter->find($asset->identifier);
+
+        if ($existing === null) {
+            throw new \RuntimeException(
+                sprintf('Line %d: the asset "%s" names the identifier %s, and the media library holds no asset under it.', $asset->line, $asset->id, $asset->identifier),
+                1787097692
+            );
+        }
+
+        return $existing;
+    }
+
     /**
-     * The document a page path names, which has to be there already.
+     * The document a page names, which has to be there already.
      */
     private function resolveDocument(ParsedSite $site, ParsedPage $page, ContentSubgraphInterface $subgraph): Node
     {
-        $path = self::absolutePathOf($site->siteNodeName, $page->path);
-        $document = $subgraph->findNodeByAbsolutePath(AbsoluteNodePath::fromString($path));
-
-        if ($document === null) {
-            throw new \RuntimeException(
-                sprintf('Line %d: no document exists at "%s" (%s in workspace %s). A seed fills a page in; it does not create one.', $page->line, $page->path, $path, $subgraph->getWorkspaceName()->value),
-                1787097672
-            );
-        }
+        $document = match (true) {
+            $page->address instanceof PagePath => $this->findByPath($site, $page->address, $page->line, $subgraph),
+            $page->address instanceof PageNode => $this->findById($page->address, $page->line, $subgraph),
+        };
 
         // The file names the document's node type, so a file written for a different page — or a
         // site created with another type than the file assumes — is caught before anything is
         // removed, rather than after.
         if ($document->nodeTypeName->value !== $page->document->nodeTypeName) {
             throw new \RuntimeException(
-                sprintf('Line %d: the document at "%s" is a %s, but the file describes a %s.', $page->document->line, $page->path, $document->nodeTypeName->value, $page->document->nodeTypeName),
+                sprintf('Line %d: the document at %s is a %s, but the file describes a %s.', $page->document->line, $page->address->describe(), $document->nodeTypeName->value, $page->document->nodeTypeName),
                 1787097673
+            );
+        }
+
+        return $document;
+    }
+
+    private function findByPath(ParsedSite $site, PagePath $address, int $line, ContentSubgraphInterface $subgraph): Node
+    {
+        $path = self::absolutePathOf($site->siteNodeName, $address->value);
+        $document = $subgraph->findNodeByAbsolutePath(AbsoluteNodePath::fromString($path));
+
+        if ($document === null) {
+            throw new \RuntimeException(
+                sprintf('Line %d: no document exists at "%s" (%s in workspace %s). A seed fills a page in; it does not create one.', $line, $address->value, $path, $subgraph->getWorkspaceName()->value),
+                1787097672
+            );
+        }
+
+        return $document;
+    }
+
+    /**
+     * Not checked against the site the file names: a node aggregate id is unique across the whole
+     * content repository, so it cannot land on a same-named page of another site the way a path can.
+     */
+    private function findById(PageNode $address, int $line, ContentSubgraphInterface $subgraph): Node
+    {
+        try {
+            $nodeAggregateId = NodeAggregateId::fromString($address->nodeAggregateId);
+        } catch (\InvalidArgumentException $exception) {
+            throw new \RuntimeException(
+                sprintf('Line %d: "%s" is not a node aggregate id.', $line, $address->nodeAggregateId),
+                1787097693,
+                $exception
+            );
+        }
+
+        $document = $subgraph->findNodeById($nodeAggregateId);
+
+        if ($document === null) {
+            throw new \RuntimeException(
+                sprintf('Line %d: no node %s exists (in workspace %s). A seed fills a page in; it does not create one.', $line, $address->nodeAggregateId, $subgraph->getWorkspaceName()->value),
+                1787097694
             );
         }
 
