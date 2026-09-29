@@ -212,7 +212,7 @@ The file describes the tree it wants to exist, with node types as element names:
 | `crm:manifest` | root   | one `crm:assets`, one `crm:site`, both optional               |
 | `crm:assets`   | 0..1   | `crm:asset`                                                  |
 | `crm:site`     | 0..1   | one or more `crm:page`; attributes `name` (required), `contentRepository`, `dimension` |
-| `crm:page`     | 1..n   | exactly one document element; attribute `path` (required)      |
+| `crm:page`     | 1..n   | exactly one document element; attribute `path` or `node` (one of them required) |
 
 Assets are global to the file rather than owned by the site, so a manifest may carry assets and no site: it seeds the media library and no content. A manifest with neither is an error.
 
@@ -272,6 +272,18 @@ For a node whose children are content:
 
 `crm:name` addresses any tethered node, and is required only for case 3.
 
+#### A page is addressed by path or by id
+
+`path` is made of node names below the site node. A document created in the Neos UI has no node name, so no path reaches it; address it by its node aggregate id instead:
+
+```xml
+<crm:page node="5b83ed3f-202c-464a-8c8b-5b28e70c2889">
+  <Acme.Site:Document.JobPosting title="…">…</Acme.Site:Document.JobPosting>
+</crm:page>
+```
+
+Either way the document has to exist already and be of the node type the file names. An id ties the manifest to one database.
+
 #### A typo is an error, a reference is a warning
 
 A property the node type does not declare stops the import:
@@ -291,6 +303,12 @@ Warnings are printed as they are collected and counted in the summary.
 #### Assets are declared once and referenced by id
 
 `<crm:assets>` lists the files the content needs; content refers to them by id (`image="hero"`). Ids are local to the file. A relative `href` resolves against the directory of the manifest, not the working directory of the command. Importing deduplicates on content, so re-running does not fill the media library with copies.
+
+An asset already in the media library is named by its `identifier` instead of an `href`, and used as it is — no file is read and its title is left alone. That is the way to reuse an image variant, whose crop no file on disk reproduces. Like a page id, it ties the manifest to one database. A dry run looks the identifier up and fails if nothing is there.
+
+```xml
+<crm:asset id="hero" identifier="8149ca7a-71da-4ff3-886e-dc0bd14fc3c2"/>
+```
 
 #### `--dry-run`
 

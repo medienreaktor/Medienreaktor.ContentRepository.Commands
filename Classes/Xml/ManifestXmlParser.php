@@ -184,7 +184,7 @@ final class ManifestXmlParser
     }
 
     /**
-     * @return array<int,ParsedAsset>
+     * @return array<int,ParsedAsset|ParsedExistingAsset>
      */
     private function parseAssets(\DOMElement $assets): array
     {
@@ -201,11 +201,21 @@ final class ManifestXmlParser
 
             $id = $child->getAttribute('id');
             $href = $child->getAttribute('href');
+            $identifier = $child->getAttribute('identifier');
 
-            if ($id === '' || $href === '') {
+            if ($id === '') {
                 throw new \RuntimeException(
-                    sprintf('Line %d: an <asset> needs both an "id" and an "href" attribute.', $child->getLineNo()),
+                    sprintf('Line %d: an <asset> needs an "id" attribute.', $child->getLineNo()),
                     1787097629
+                );
+            }
+
+            // Both at once would leave it to a precedence rule which one the content gets, and a
+            // silent winner is how an edit gets ignored.
+            if (($href === '') === ($identifier === '')) {
+                throw new \RuntimeException(
+                    sprintf('Line %d: an <asset> needs either an "href" to import or an "identifier" of an asset already in the media library, not both.', $child->getLineNo()),
+                    1787097690
                 );
             }
 
@@ -220,6 +230,21 @@ final class ManifestXmlParser
 
             $seenIds[$id] = $child->getLineNo();
             $title = $child->getAttribute('title');
+
+            if ($identifier !== '') {
+                // The title belongs to the asset in the media library, and this format does not
+                // write to one it did not import.
+                if ($title !== '') {
+                    throw new \RuntimeException(
+                        sprintf('Line %d: an <asset> with an "identifier" takes no "title"; the asset keeps the one it has.', $child->getLineNo()),
+                        1787097691
+                    );
+                }
+
+                $parsed[] = new ParsedExistingAsset($id, $identifier, $child->getLineNo());
+                continue;
+            }
+
             $parsed[] = new ParsedAsset($id, $href, $title === '' ? null : $title, $child->getLineNo());
         }
 
@@ -271,10 +296,11 @@ final class ManifestXmlParser
     private function parsePage(\DOMElement $page): ParsedPage
     {
         $path = $page->getAttribute('path');
+        $node = $page->getAttribute('node');
 
-        if ($path === '') {
+        if (($path === '') === ($node === '')) {
             throw new \RuntimeException(
-                sprintf('Line %d: a <page> needs a "path" attribute, "/" for the site node itself.', $page->getLineNo()),
+                sprintf('Line %d: a <page> needs either a "path" attribute, "/" for the site node itself, or a "node" attribute with a node aggregate id, not both.', $page->getLineNo()),
                 1787097631
             );
         }
@@ -288,7 +314,11 @@ final class ManifestXmlParser
             );
         }
 
-        return new ParsedPage($path, $this->parseNode($children[0]), $page->getLineNo());
+        return new ParsedPage(
+            $path === '' ? new PageNode($node) : new PagePath($path),
+            $this->parseNode($children[0]),
+            $page->getLineNo()
+        );
     }
 
     private function parseNode(\DOMElement $element): ParsedNode

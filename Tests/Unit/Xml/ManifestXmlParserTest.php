@@ -5,6 +5,10 @@ declare(strict_types=1);
 namespace Medienreaktor\ContentRepository\Commands\Tests\Unit\Xml;
 
 use Medienreaktor\ContentRepository\Commands\Xml\ManifestXmlParser;
+use Medienreaktor\ContentRepository\Commands\Xml\PageNode;
+use Medienreaktor\ContentRepository\Commands\Xml\PagePath;
+use Medienreaktor\ContentRepository\Commands\Xml\ParsedAsset;
+use Medienreaktor\ContentRepository\Commands\Xml\ParsedExistingAsset;
 use PHPUnit\Framework\TestCase;
 
 final class ManifestXmlParserTest extends TestCase
@@ -24,9 +28,13 @@ final class ManifestXmlParserTest extends TestCase
         ));
 
         self::assertCount(1, $manifest->assets);
-        self::assertSame('hero', $manifest->assets[0]->id);
-        self::assertSame('images/hero.png', $manifest->assets[0]->href);
-        self::assertSame('Hero', $manifest->assets[0]->title);
+
+        $asset = $manifest->assets[0];
+
+        self::assertInstanceOf(ParsedAsset::class, $asset);
+        self::assertSame('hero', $asset->id);
+        self::assertSame('images/hero.png', $asset->href);
+        self::assertSame('Hero', $asset->title);
 
         $site = $manifest->site;
 
@@ -36,7 +44,7 @@ final class ManifestXmlParserTest extends TestCase
         self::assertSame(['language' => 'de'], $site->dimensionSpacePoint);
 
         self::assertCount(1, $site->pages);
-        self::assertSame('/', $site->pages[0]->path);
+        self::assertEquals(new PagePath('/'), $site->pages[0]->address);
         self::assertSame('Acme.Site:Document.Page', $site->pages[0]->document->nodeTypeName);
         self::assertSame('Acme.Site:Content.Hero', $site->pages[0]->document->children[0]->nodeTypeName);
         self::assertSame(['image' => 'hero'], $site->pages[0]->document->children[0]->properties);
@@ -258,12 +266,71 @@ final class ManifestXmlParserTest extends TestCase
         ));
     }
 
-    public function testAnAssetWithoutAnHrefIsRejected(): void
+    public function testAnAssetWithoutAnIdIsRejected(): void
     {
         $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('an <asset> needs both an "id" and an "href" attribute');
+        $this->expectExceptionMessage('an <asset> needs an "id" attribute');
+
+        $this->parser->parse($this->manifest(assets: '<crm:asset href="hero.png"/>', content: '<Acme.Site:Content.Hero/>'));
+    }
+
+    public function testAnAssetWithoutAnHrefOrIdentifierIsRejected(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('an <asset> needs either an "href" to import or an "identifier"');
 
         $this->parser->parse($this->manifest(assets: '<crm:asset id="hero"/>', content: '<Acme.Site:Content.Hero/>'));
+    }
+
+    public function testAnAssetWithBothAnHrefAndAnIdentifierIsRejected(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('not both');
+
+        $this->parser->parse($this->manifest(
+            assets: '<crm:asset id="hero" href="hero.png" identifier="8149ca7a-71da-4ff3-886e-dc0bd14fc3c2"/>',
+            content: '<Acme.Site:Content.Hero/>'
+        ));
+    }
+
+    /**
+     * An image variant holds an editor's crop, which no file on disk reproduces, so reusing it means
+     * naming it.
+     */
+    public function testAnAssetMayNameOneAlreadyInTheMediaLibrary(): void
+    {
+        $manifest = $this->parser->parse($this->manifest(
+            assets: '<crm:asset id="hero" identifier="8149ca7a-71da-4ff3-886e-dc0bd14fc3c2"/>',
+            content: '<Acme.Site:Content.Hero image="hero"/>'
+        ));
+
+        $asset = $manifest->assets[0];
+
+        self::assertInstanceOf(ParsedExistingAsset::class, $asset);
+        self::assertSame('hero', $asset->id);
+        self::assertSame('8149ca7a-71da-4ff3-886e-dc0bd14fc3c2', $asset->identifier);
+    }
+
+    public function testAnExistingAssetTakesNoTitle(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('takes no "title"');
+
+        $this->parser->parse($this->manifest(
+            assets: '<crm:asset id="hero" identifier="8149ca7a-71da-4ff3-886e-dc0bd14fc3c2" title="Hero"/>',
+            content: '<Acme.Site:Content.Hero/>'
+        ));
+    }
+
+    public function testAnExistingAssetIdSharesTheIdsOfImportedOnes(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('the asset id "hero" is already used on line');
+
+        $this->parser->parse($this->manifest(
+            assets: '<crm:asset id="hero" href="a.png"/><crm:asset id="hero" identifier="8149ca7a-71da-4ff3-886e-dc0bd14fc3c2"/>',
+            content: '<Acme.Site:Content.Hero/>'
+        ));
     }
 
     public function testAPageHoldsExactlyOneDocument(): void
@@ -274,12 +341,34 @@ final class ManifestXmlParserTest extends TestCase
         $this->parser->parse($this->manifestWithPage('<crm:page path="/"><Acme.Site:Document.Page/><Acme.Site:Document.Page/></crm:page>'));
     }
 
-    public function testAPageNeedsAPath(): void
+    public function testAPageNeedsAPathOrANode(): void
     {
         $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('a <page> needs a "path" attribute');
+        $this->expectExceptionMessage('a <page> needs either a "path" attribute');
 
         $this->parser->parse($this->manifestWithPage('<crm:page><Acme.Site:Document.Page/></crm:page>'));
+    }
+
+    /**
+     * A document created in the Neos UI has no node name, so no path reaches it.
+     */
+    public function testAPageMayBeAddressedByNodeAggregateId(): void
+    {
+        $manifest = $this->parser->parse($this->manifestWithPage(
+            '<crm:page node="5b83ed3f-202c-464a-8c8b-5b28e70c2889"><Acme.Site:Document.Page/></crm:page>'
+        ));
+
+        self::assertEquals(new PageNode('5b83ed3f-202c-464a-8c8b-5b28e70c2889'), $manifest->site?->pages[0]->address);
+    }
+
+    public function testAPageWithBothAPathAndANodeIsRejected(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('not both');
+
+        $this->parser->parse($this->manifestWithPage(
+            '<crm:page path="/" node="5b83ed3f-202c-464a-8c8b-5b28e70c2889"><Acme.Site:Document.Page/></crm:page>'
+        ));
     }
 
     public function testASiteNeedsAName(): void

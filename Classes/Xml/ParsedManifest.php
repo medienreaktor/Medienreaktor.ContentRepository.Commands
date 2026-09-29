@@ -18,7 +18,7 @@ namespace Medienreaktor\ContentRepository\Commands\Xml;
 final readonly class ParsedManifest
 {
     /**
-     * @param array<int,ParsedAsset> $assets
+     * @param array<int,ParsedAsset|ParsedExistingAsset> $assets
      */
     public function __construct(
         public array $assets,
