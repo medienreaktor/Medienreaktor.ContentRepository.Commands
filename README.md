@@ -1,6 +1,9 @@
 # Medienreaktor.ContentRepository.Commands
 
+[![Packagist Version](https://img.shields.io/packagist/v/medienreaktor/contentrepository-commands)](https://packagist.org/packages/medienreaktor/contentrepository-commands)
+[![PHP Version Support](https://img.shields.io/packagist/dependency-v/medienreaktor/contentrepository-commands/php)](https://www.php.net/)
 [![CI](https://github.com/medienreaktor/Medienreaktor.ContentRepository.Commands/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/medienreaktor/Medienreaktor.ContentRepository.Commands/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 CLI Commands for the Event Sourced Content Repository of Neos CMS.
 
