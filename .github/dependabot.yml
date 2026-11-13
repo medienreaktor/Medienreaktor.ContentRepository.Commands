@@ -1,7 +1,13 @@
+# Standard Dependabot configuration of a medienreaktor Composer package without a
+# frontend, copied unchanged from the set-up-ci skill
+# (templates/package/dependabot.yml). The skill picks one of four variants: with or
+# without a frontend (Dependabot fails a run when an ecosystem's directories hold no
+# manifest) and with or without a Packistry dependency (Dependabot cannot
+# authenticate to Packistry).
 version: 2
 updates:
-    # ci.yml pins third-party actions by commit SHA, which is the right call for
-    # review but means nothing ever tells us they went stale. This does.
+    # The workflows pin third-party actions by commit SHA, which is the right call
+    # for review but means nothing ever tells us they went stale. This does.
     - package-ecosystem: "github-actions"
       directory: "/"
       schedule:
@@ -35,5 +41,16 @@ updates:
       ignore:
           # The Neos range encodes which Neos generations this package supports.
           # The CI matrix proves that range; moving it is a release decision, not
-          # dependency drift.
+          # dependency drift. Matches nothing in a package outside Neos.
           - dependency-name: "neos/*"
+          # A Studio plugin's Studio range follows the Studio release it is built
+          # and type-checked against; moving it is a release decision too.
+          - dependency-name: "medienreaktor/neos-studio"
+          # The same for a package built on Symfony rather than Neos (FigmaTools'
+          # symfony/console): the range the matrix proves, not drift.
+          - dependency-name: "symfony/*"
+          # A PHPUnit major changes the configuration format and the PHP floor the
+          # runner needs (13 wants 8.4.1), so moving to one is a decision, not drift.
+          - dependency-name: "phpunit/phpunit"
+            update-types: ["version-update:semver-major"]
+
